@@ -26,12 +26,12 @@ contract DexynthStakingV1 is Ownable {
 
     // Mappings
     mapping(address => User) public user;
-    mapping(uint => Epoch) public epoch;
-    mapping(uint => Level) public level;
-    mapping(address => mapping(uint => Stake)) public stakeInfo;                                                        // wallet => stakeIndex = Stake
-    mapping(address => mapping(uint => mapping(uint => Batch))) public stakedTokensPerWalletAndEpochAndLevel;           // wallet => epoch => level = Batch
-    mapping(uint => mapping(uint => Accumulated)) public accStakedTokensPerEpochAndLevel;                               // epoch  => level = Accumulated
-    mapping(address => mapping(uint => Accumulated)) public accStakedTokensPerWalletAndLevel;                           // wallet => level = Accumulated
+    mapping(uint32 => Epoch) public epoch;
+    mapping(uint8 => Level) public level;
+    mapping(address => mapping(uint64 => Stake)) public stakeInfo;                                                        // wallet => stakeIndex = Stake
+    mapping(address => mapping(uint32 => mapping(uint8 => Batch))) public stakedTokensPerWalletAndEpochAndLevel;           // wallet => epoch => level = Batch
+    mapping(uint32 => mapping(uint8 => Accumulated)) public accStakedTokensPerEpochAndLevel;                               // epoch  => level = Accumulated
+    mapping(address => mapping(uint8 => Accumulated)) public accStakedTokensPerWalletAndLevel;                           // wallet => level = Accumulated
 
 
     // Structs
@@ -90,24 +90,24 @@ contract DexynthStakingV1 is Ownable {
 
     event LevelsUpdated(Level[5] levels);
 
-    event RewardsHarvested(address indexed user, uint amount);
+    event RewardsHarvested(address indexed user, uint256 amount);
 
-    event DEXYsStaked(address indexed user, uint amount);
+    event DEXYsStaked(address indexed user, uint256 amount);
 
-    event DEXYsUnstaked(address indexed user, uint amount);
+    event DEXYsUnstaked(address indexed user, uint256 amount);
 
-    event EpochClosed(uint epochIndex, uint rewards);
+    event EpochClosed(uint32 epochIndex, uint256 rewards);
 
-    event USDTMigrationSuccess(uint amount, address newContractAddress);
+    event USDTMigrationSuccess(uint256 amount, address newContractAddress);
 
-    event DEXYMigrationSuccess(uint amount, address newContractAddress);
+    event DEXYMigrationSuccess(uint256 amount, address newContractAddress);
 
     constructor(
         address _DEXY,
         address _USDT,
         Level[5] memory _levels,            // [[lockingPeriod0, boostP0], [lockingPeriod1, boostP1], [lockingPeriod2, boostP2], [lockingPeriod3, boostP3], [lockingPeriod4, boostP4]]
                                             // [[2592000, 6500000000], [7776000, 8500000000], [15552000, 10000000000], [31536000, 11500000000], [62208000, 13500000000]]
-        uint _epochDuration                 // Seconds
+        uint256 _epochDuration                 // Seconds
     ) {
         // Checking addresses
         if (address(_DEXY) == address(0) || address(_USDT) == address(0)) revert WrongParams();
@@ -139,7 +139,7 @@ contract DexynthStakingV1 is Ownable {
         _;
     }
 
-    function stake(uint _amount, uint _level /* starting from 0 */) public {
+    function stake(uint256 _amount, uint8 _level /* starting from 0 */) public {
         // Check for closing epochs first
         checkForClosingEpochs();
         // Deposit DEXYs to the pool
@@ -147,9 +147,9 @@ contract DexynthStakingV1 is Ownable {
         // Create stakeInfo
         stakeInfo[msg.sender][user[msg.sender].stakeIndex].timestamp = uint40(block.timestamp);
         stakeInfo[msg.sender][user[msg.sender].stakeIndex].stakedDEXYs = _amount;
-        stakeInfo[msg.sender][user[msg.sender].stakeIndex].level = uint8(_level);
-        stakeInfo[msg.sender][user[msg.sender].stakeIndex].startingEpoch = uint32(getCurrentEpochIndex() + 1);
-        stakeInfo[msg.sender][user[msg.sender].stakeIndex].unlockingEpoch = uint32(getCurrentEpochIndex() + 1 + (level[_level].lockingPeriod / epochDuration));
+        stakeInfo[msg.sender][user[msg.sender].stakeIndex].level = _level;
+        stakeInfo[msg.sender][user[msg.sender].stakeIndex].startingEpoch = getCurrentEpochIndex() + 1;
+        stakeInfo[msg.sender][user[msg.sender].stakeIndex].unlockingEpoch = getCurrentEpochIndex() + 1 + (level[_level].lockingPeriod / epochDuration);
         // Accumulate tokens for next epoch
         accStakedTokensPerEpochAndLevel[getCurrentEpochIndex() + 1][_level].accStakedTokens += _amount;
         // Update User values
@@ -161,7 +161,7 @@ contract DexynthStakingV1 is Ownable {
         emit DEXYsStaked(msg.sender, _amount);
     }
 
-    function unstake(uint _stakeIndex) public {
+    function unstake(uint64 _stakeIndex) public {
         // One unstake per stake
         if (stakeInfo[msg.sender][_stakeIndex].unstacked) revert AlreadyUnstaked();
         // Stake status
@@ -169,9 +169,9 @@ contract DexynthStakingV1 is Ownable {
         // Checking for closing epochs
         checkForClosingEpochs();
         // stakeInfo data
-        uint _amount = stakeInfo[msg.sender][_stakeIndex].stakedDEXYs;
-        uint _level = stakeInfo[msg.sender][_stakeIndex].level;
-        uint _epoch = stakeInfo[msg.sender][_stakeIndex].startingEpoch;
+        uint256 _amount = stakeInfo[msg.sender][_stakeIndex].stakedDEXYs;
+        uint8 _level = stakeInfo[msg.sender][_stakeIndex].level;
+        uint32 _epoch = stakeInfo[msg.sender][_stakeIndex].startingEpoch;
         // Try to harvesting tokens first
         if (isHarvestable()) {
             // Harvest rewards
@@ -196,14 +196,14 @@ contract DexynthStakingV1 is Ownable {
         checkForClosingEpochs();
         if (((getCurrentEpochIndex()) - (user[msg.sender].lastEpochHarvested + 1)) == 0) revert NoEpochsToHarvest();
         if (user[msg.sender].totalStakedDEXYs == 0) revert NoStakedTokens();
-        uint totalUserRewards;
+        uint256 totalUserRewards;
         // Harvesting from last epoch harvested to the last closed one
         for (uint8 j = 0; j < NUMBER_OF_LEVELS;) {
             // Get the accumulated tokens from last epoch
             for (uint32 i = user[msg.sender].lastEpochHarvested + 1; i <= getCurrentEpochIndex() - 1;) {
-                uint epochTotalRewards = epoch[i].totalRewards;
-                uint epochTotalBoostedStakedTokens = epoch[i].totalTokensBoosted;
-                uint payoutPerTokenAtThisLevel;
+                uint256 epochTotalRewards = epoch[i].totalRewards;
+                uint256 epochTotalBoostedStakedTokens = epoch[i].totalTokensBoosted;
+                uint256 payoutPerTokenAtThisLevel;
                 if (epochTotalBoostedStakedTokens * level[j].boostP > 0) {
                     payoutPerTokenAtThisLevel = (((epochTotalRewards * 1e18) / epochTotalBoostedStakedTokens) * level[j].boostP) /  1e10;
                 }
@@ -225,21 +225,21 @@ contract DexynthStakingV1 is Ownable {
         emit RewardsHarvested(msg.sender, totalUserRewards);
     }
 
-    function addStakingReward(uint _amount) public {
+    function addStakingReward(uint256 _amount) public {
         IERC20(USDT).safeTransferFrom(msg.sender, address(this), _amount);
         accRewards += _amount;
     }
 
     function checkForClosingEpochs() public {
-        uint targetEpochIndex = getCurrentEpochIndex();
+        uint32 targetEpochIndex = getCurrentEpochIndex();
         // If there are epochs ready for closing
         if (targetEpochIndex > lastClosedEpochIndex+1) {
-            uint epochsReadyForClosing = targetEpochIndex - (lastClosedEpochIndex+1);
+            uint32 epochsReadyForClosing = targetEpochIndex - (lastClosedEpochIndex+1);
             // Calculating rewards for every second
-            (uint fromTimestamp,) = getEpochTimestamps(lastClosedEpochIndex+1);
-            uint secondsFromLastClosedEpoch = (block.timestamp - fromTimestamp);
-            uint rewardsPerSecond = accRewards / secondsFromLastClosedEpoch;
-            uint rewardsPerEpoch = rewardsPerSecond * epochDuration;
+            (uint40 fromTimestamp,) = getEpochTimestamps(lastClosedEpochIndex+1);
+            uint256 secondsFromLastClosedEpoch = (block.timestamp - fromTimestamp);
+            uint256 rewardsPerSecond = accRewards / secondsFromLastClosedEpoch;
+            uint256 rewardsPerEpoch = rewardsPerSecond * epochDuration;
             for (uint32 i=0; i<epochsReadyForClosing;) {
                 closeCurrentEpoch(rewardsPerEpoch);
                 unchecked { i++; }
@@ -247,12 +247,12 @@ contract DexynthStakingV1 is Ownable {
         }
     }
 
-    function getCurrentEpochIndex() public view returns(uint) {
+    function getCurrentEpochIndex() public view returns(uint32) {
         return getEpochIndexByTimestamp(block.timestamp);
     }
 
-    function getLevels() public view returns(uint[2][5] memory) {
-        uint[2][5] memory levels;
+    function getLevels() public view returns(uint256[2][5] memory) {
+        uint256[2][5] memory levels;
         for (uint8 i=0; i<NUMBER_OF_LEVELS;) {
             levels[i] = [level[i].lockingPeriod,level[i].boostP];
             unchecked { i++; }
@@ -260,11 +260,11 @@ contract DexynthStakingV1 is Ownable {
         return levels;
     }
 
-    function closeCurrentEpoch(uint _epochRewards) internal {
+    function closeCurrentEpoch(uint256 _epochRewards) internal {
         // Closing current epoch...
         // Store rewards
         epoch[lastClosedEpochIndex+1].totalRewards = _epochRewards;
-        uint tempTotalTokensBoosted;
+        uint256 tempTotalTokensBoosted;
         for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
             tempTotalTokensBoosted += (accStakedTokensPerEpochAndLevel[lastClosedEpochIndex+1][i].accStakedTokens * level[i].boostP) / 1e10;
             // Add the accumulated epoch values to the next one
@@ -284,15 +284,15 @@ contract DexynthStakingV1 is Ownable {
         lastClosedEpochIndex++;
     }
 
-    function getEpochTimestamps(uint _epochIndex) internal view returns(uint, uint) {
-        uint startTimestamp = GENESIS_EPOCH_TIMESTAMP + ((epochDuration + 1) * _epochIndex);
-        uint endTimeStamp = startTimestamp + epochDuration;
+    function getEpochTimestamps(uint32 _epochIndex) internal view returns(uint40, uint40) {
+        uint40 startTimestamp = uint40(GENESIS_EPOCH_TIMESTAMP + ((epochDuration + 1) * _epochIndex));
+        uint40 endTimeStamp = uint40(startTimestamp + epochDuration);
         return (startTimestamp, endTimeStamp);
     }
 
-    function getEpochIndexByTimestamp(uint _timestamp) internal view returns(uint _epochIndex) {
+    function getEpochIndexByTimestamp(uint256 _timestamp) internal view returns(uint32 _epochIndex) {
         if (_timestamp < GENESIS_EPOCH_TIMESTAMP) revert TimestampLowerThanEpoch0Starts();
-        _epochIndex = (_timestamp - GENESIS_EPOCH_TIMESTAMP) / epochDuration;
+        _epochIndex = uint32((_timestamp - GENESIS_EPOCH_TIMESTAMP) / epochDuration);
         return _epochIndex;
     }
 
@@ -307,7 +307,7 @@ contract DexynthStakingV1 is Ownable {
     function checkboostP(Level[5] memory _levels) internal view {
         // Level format [lockingPeriod, boostP]
         bool failed;
-        uint totalBoost;
+        uint256 totalBoost;
         for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
             if ((i < NUMBER_OF_LEVELS - 1) && (!((_levels[i].lockingPeriod < _levels[i + 1].lockingPeriod) && (_levels[i].boostP < _levels[i + 1].boostP)))) failed = true;
             totalBoost += _levels[i].boostP;
@@ -318,8 +318,8 @@ contract DexynthStakingV1 is Ownable {
     }
 
     function migrateContract(address _newContractAddress) public onlyGov {
-        uint USDTBalance = IERC20(USDT).balanceOf(address(this));
-        uint DEXYBalance = IERC20(DEXY).balanceOf(address(this));
+        uint256 USDTBalance = IERC20(USDT).balanceOf(address(this));
+        uint256 DEXYBalance = IERC20(DEXY).balanceOf(address(this));
         IERC20(USDT).safeTransfer(_newContractAddress, USDTBalance);
         IERC20(DEXY).safeTransfer(_newContractAddress, DEXYBalance);
         emit USDTMigrationSuccess(USDTBalance, _newContractAddress);
