@@ -98,6 +98,71 @@ contract DexynthStakingTest is Test {
         staking.setLevels(levels);
     }
 
+    function testSetLevelsFailValidation() public {
+        DexynthStakingV1.Level[5] memory badLevels = levels;
+        // Change boostP so sum is wrong
+        badLevels[0].boostP = 1; 
+        
+        vm.expectRevert(DexynthStakingV1.BoostSumNotRight.selector);
+        staking.setLevels(badLevels);
+    }
+
+    function testSetLevelsFailOrdering() public {
+        DexynthStakingV1.Level[5] memory badLevels = levels;
+        // Make level 1 locking period smaller than level 0
+        badLevels[1].lockingPeriod = badLevels[0].lockingPeriod - 1;
+        
+        vm.expectRevert(DexynthStakingV1.WrongValues.selector);
+        staking.setLevels(badLevels);
+    }
+
+    function testSetGovAddressZero() public {
+        vm.expectRevert(DexynthStakingV1.AddressZero.selector);
+        staking.setGov(address(0));
+    }
+
+    function testMigrateContract() public {
+        // Setup some balances
+        staking.addStakingReward(1000 ether); // USDT
+        
+        vm.prank(user1);
+        staking.stake(500 ether, 0); // DEXY
+        
+        address newContract = address(0x999);
+        
+        uint256 usdtBalBefore = usdt.balanceOf(newContract);
+        uint256 dexyBalBefore = dexy.balanceOf(newContract);
+        
+        staking.migrateContract(newContract);
+        
+        uint256 usdtBalAfter = usdt.balanceOf(newContract);
+        uint256 dexyBalAfter = dexy.balanceOf(newContract);
+        
+        assertEq(usdtBalAfter - usdtBalBefore, 1000 ether);
+        // In setUp, we transferred 10_000_000 ether DEXY to staking contract.
+        // Plus user1 staked 500 ether.
+        // Total DEXY in contract = 10_000_000 + 500 = 10_000_500 ether.
+        assertEq(dexyBalAfter - dexyBalBefore, 10_000_500 ether);
+        
+        assertEq(usdt.balanceOf(address(staking)), 0);
+        assertEq(dexy.balanceOf(address(staking)), 0);
+    }
+
+    function testMigrateContractFailNotGov() public {
+        vm.prank(user1);
+        vm.expectRevert(DexynthStakingV1.GovOnly.selector);
+        staking.migrateContract(address(0x999));
+    }
+
+    function testGetLevels() public {
+        uint256[2][5] memory levelsData = staking.getLevels();
+        // Check a few values
+        assertEq(levelsData[0][0], levels[0].lockingPeriod);
+        assertEq(levelsData[0][1], levels[0].boostP);
+        assertEq(levelsData[4][0], levels[4].lockingPeriod);
+        assertEq(levelsData[4][1], levels[4].boostP);
+    }
+
     // --- Epochs Tests ---
 
     function testEpochClosingByStake() public {
@@ -380,6 +445,18 @@ contract DexynthStakingTest is Test {
         assertEq(unstaked1a, false);
         assertEq(unstaked1b, false);
         assertEq(unstaked2, false);
+    }
+
+    function testStakeFailZeroAmount() public {
+        vm.prank(user1);
+        vm.expectRevert(DexynthStakingV1.WrongParams.selector);
+        staking.stake(0, 0);
+    }
+
+    function testStakeFailInvalidLevel() public {
+        vm.prank(user1);
+        vm.expectRevert(DexynthStakingV1.WrongParams.selector);
+        staking.stake(100 ether, 5); // Level 5 does not exist (0-4)
     }
 
     // --- Unstake Tests ---
