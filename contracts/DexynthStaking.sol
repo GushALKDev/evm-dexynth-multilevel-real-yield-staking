@@ -122,9 +122,10 @@ contract DexynthStakingV1 is Ownable {
         GENESIS_EPOCH_TIMESTAMP = uint40(block.timestamp - epochDuration);
         // Setting levels data
         checkboostP(_levels);
-        for (uint i = 0; i < NUMBER_OF_LEVELS; i++) {
+        for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
             level[i].lockingPeriod = _levels[i].lockingPeriod;
             level[i].boostP = _levels[i].boostP;
+            unchecked { i++; }
         }
         // Setting addresses
         govAddress = owner();
@@ -197,9 +198,9 @@ contract DexynthStakingV1 is Ownable {
         if (user[msg.sender].totalStakedDEXYs == 0) revert NoStakedTokens();
         uint totalUserRewards;
         // Harvesting from last epoch harvested to the last closed one
-        for (uint j = 0; j < NUMBER_OF_LEVELS; j++) {
+        for (uint8 j = 0; j < NUMBER_OF_LEVELS;) {
             // Get the accumulated tokens from last epoch
-            for (uint i = user[msg.sender].lastEpochHarvested + 1; i <= getCurrentEpochIndex() - 1; i++) {
+            for (uint32 i = user[msg.sender].lastEpochHarvested + 1; i <= getCurrentEpochIndex() - 1;) {
                 uint epochTotalRewards = epoch[i].totalRewards;
                 uint epochTotalBoostedStakedTokens = epoch[i].totalTokensBoosted;
                 uint payoutPerTokenAtThisLevel;
@@ -210,7 +211,9 @@ contract DexynthStakingV1 is Ownable {
                 // Add the staked tokens after last harvest to the accumulated value
                 accStakedTokensPerWalletAndLevel[msg.sender][j].accStakedTokens += stakedTokensPerWalletAndEpochAndLevel[msg.sender][i][j].stakedDEXYs;
                 totalUserRewards += (payoutPerTokenAtThisLevel * accStakedTokensPerWalletAndLevel[msg.sender][j].accStakedTokens) / 1e18;
+                unchecked { i++; }
             }
+            unchecked { j++; }
             // Store the accumulated tokens after harvest.
         }
         user[msg.sender].lastEpochHarvested = uint32(getCurrentEpochIndex() - 1);
@@ -237,8 +240,9 @@ contract DexynthStakingV1 is Ownable {
             uint secondsFromLastClosedEpoch = (block.timestamp - fromTimestamp);
             uint rewardsPerSecond = accRewards / secondsFromLastClosedEpoch;
             uint rewardsPerEpoch = rewardsPerSecond * epochDuration;
-            for (uint i=0; i<epochsReadyForClosing; i++) {
+            for (uint32 i=0; i<epochsReadyForClosing;) {
                 closeCurrentEpoch(rewardsPerEpoch);
+                unchecked { i++; }
             }
         }
     }
@@ -249,8 +253,9 @@ contract DexynthStakingV1 is Ownable {
 
     function getLevels() public view returns(uint[2][5] memory) {
         uint[2][5] memory levels;
-        for (uint i=0; i<NUMBER_OF_LEVELS; i++) {
+        for (uint8 i=0; i<NUMBER_OF_LEVELS;) {
             levels[i] = [level[i].lockingPeriod,level[i].boostP];
+            unchecked { i++; }
         }
         return levels;
     }
@@ -260,10 +265,11 @@ contract DexynthStakingV1 is Ownable {
         // Store rewards
         epoch[lastClosedEpochIndex+1].totalRewards = _epochRewards;
         uint tempTotalTokensBoosted;
-        for (uint i = 0; i < NUMBER_OF_LEVELS; i++) {
+        for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
             tempTotalTokensBoosted += (accStakedTokensPerEpochAndLevel[lastClosedEpochIndex+1][i].accStakedTokens * level[i].boostP) / 1e10;
             // Add the accumulated epoch values to the next one
             accStakedTokensPerEpochAndLevel[lastClosedEpochIndex + 2][i].accStakedTokens += accStakedTokensPerEpochAndLevel[lastClosedEpochIndex+1][i].accStakedTokens;
+            unchecked { i++; }
         }
         // Set totalTokensBoosted
         epoch[lastClosedEpochIndex+1].totalTokensBoosted = tempTotalTokensBoosted;
@@ -302,9 +308,10 @@ contract DexynthStakingV1 is Ownable {
         // Level format [lockingPeriod, boostP]
         bool failed;
         uint totalBoost;
-        for (uint i = 0; i < NUMBER_OF_LEVELS; i++) {
+        for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
             if ((i < NUMBER_OF_LEVELS - 1) && (!((_levels[i].lockingPeriod < _levels[i + 1].lockingPeriod) && (_levels[i].boostP < _levels[i + 1].boostP)))) failed = true;
             totalBoost += _levels[i].boostP;
+            unchecked { i++; }
         }
         if (totalBoost != NUMBER_OF_LEVELS * 1e10) revert BoostSumNotRight();
         if (failed) revert WrongValues();
@@ -330,9 +337,10 @@ contract DexynthStakingV1 is Ownable {
     function setLevels(Level[5] memory _levels) public onlyGov {
         // Level format [lockingPeriod, boostP]
         checkboostP(_levels);
-        for (uint i = 0; i < NUMBER_OF_LEVELS; i++) {
+        for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
             level[i].lockingPeriod = _levels[i].lockingPeriod;
             level[i].boostP = _levels[i].boostP;
+            unchecked { i++; }
         }
         // Event
         emit LevelsUpdated(_levels);
