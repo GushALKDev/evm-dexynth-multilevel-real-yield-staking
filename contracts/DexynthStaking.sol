@@ -71,6 +71,20 @@ contract DexynthStakingV1 is Ownable {
         uint40 endTimestamp;                // 5 bytes
     }
     
+    // Errors
+    error WrongParams();
+    error MinimumOneDay();
+    error BoostSumNotRight();
+    error WrongValues();
+    error GovOnly();
+    error AlreadyUnstaked();
+    error StakeStillLocked();
+    error NoEpochsToHarvest();
+    error NoStakedTokens();
+    error NoRewardsToHarvest();
+    error TimestampLowerThanEpoch0Starts();
+    error AddressZero();
+
     // Events
     event GovFundUpdated(address value);
 
@@ -96,9 +110,9 @@ contract DexynthStakingV1 is Ownable {
         uint _epochDuration                 // Seconds
     ) {
         // Checking addresses
-        require(address(_DEXY) != address(0) && address(_USDT) != address(0), "WRONG_PARAMS");
+        if (address(_DEXY) == address(0) || address(_USDT) == address(0)) revert WrongParams();
         // Checking minimum epoch duration
-        require(_epochDuration >= 86400, "MINIMUM_ONE_DAY");
+        if (_epochDuration < 86400) revert MinimumOneDay();
         // Setting epochDuration
         epochDuration = uint32(_epochDuration);
         // Creating genesis epoch
@@ -120,7 +134,7 @@ contract DexynthStakingV1 is Ownable {
 
     // Modifiers
     modifier onlyGov() {
-        require(msg.sender == govAddress, "GOV_ONLY");
+        if (msg.sender != govAddress) revert GovOnly();
         _;
     }
 
@@ -148,9 +162,9 @@ contract DexynthStakingV1 is Ownable {
 
     function unstake(uint _stakeIndex) public {
         // One unstake per stake
-        require(stakeInfo[msg.sender][_stakeIndex].unstacked == false, "ALREADY_UNSTAKED");
+        if (stakeInfo[msg.sender][_stakeIndex].unstacked) revert AlreadyUnstaked();
         // Stake status
-        require(getCurrentEpochIndex() >= stakeInfo[msg.sender][_stakeIndex].unlockingEpoch, "STAKE_STILL_LOCKED");
+        if (getCurrentEpochIndex() < stakeInfo[msg.sender][_stakeIndex].unlockingEpoch) revert StakeStillLocked();
         // Checking for closing epochs
         checkForClosingEpochs();
         // stakeInfo data
@@ -179,8 +193,8 @@ contract DexynthStakingV1 is Ownable {
     function harvest() public {
         // Check for closing epochs first
         checkForClosingEpochs();
-        require((((getCurrentEpochIndex()) - (user[msg.sender].lastEpochHarvested + 1)) > 0),"NO_EPOCHS_TO_HARVEST");
-        require(user[msg.sender].totalStakedDEXYs > 0, "NO_STAKED_TOKENS");
+        if (((getCurrentEpochIndex()) - (user[msg.sender].lastEpochHarvested + 1)) == 0) revert NoEpochsToHarvest();
+        if (user[msg.sender].totalStakedDEXYs == 0) revert NoStakedTokens();
         uint totalUserRewards;
         // Harvesting from last epoch harvested to the last closed one
         for (uint j = 0; j < NUMBER_OF_LEVELS; j++) {
@@ -201,7 +215,7 @@ contract DexynthStakingV1 is Ownable {
         }
         user[msg.sender].lastEpochHarvested = uint32(getCurrentEpochIndex() - 1);
         user[msg.sender].totalHarvestedRewards += totalUserRewards;
-        require(totalUserRewards > 0, "NO_REWARDS_TO_HARVEST");
+        if (totalUserRewards == 0) revert NoRewardsToHarvest();
         // Transfer USDT rewards to the user
         IERC20(USDT).safeTransfer(msg.sender, totalUserRewards);
         // Event
@@ -271,7 +285,7 @@ contract DexynthStakingV1 is Ownable {
     }
 
     function getEpochIndexByTimestamp(uint _timestamp) internal view returns(uint _epochIndex) {
-        require(_timestamp >= GENESIS_EPOCH_TIMESTAMP, "TIMESTAMP_LOWER_THAN_EPOCH_0_STARTS");
+        if (_timestamp < GENESIS_EPOCH_TIMESTAMP) revert TimestampLowerThanEpoch0Starts();
         _epochIndex = (_timestamp - GENESIS_EPOCH_TIMESTAMP) / epochDuration;
         return _epochIndex;
     }
@@ -292,8 +306,8 @@ contract DexynthStakingV1 is Ownable {
             if ((i < NUMBER_OF_LEVELS - 1) && (!((_levels[i].lockingPeriod < _levels[i + 1].lockingPeriod) && (_levels[i].boostP < _levels[i + 1].boostP)))) failed = true;
             totalBoost += _levels[i].boostP;
         }
-        require(totalBoost == NUMBER_OF_LEVELS * 1e10, "BOOST_SUM_NOT_RIGHT");
-        require(!failed, "WRONG_VALUES");
+        if (totalBoost != NUMBER_OF_LEVELS * 1e10) revert BoostSumNotRight();
+        if (failed) revert WrongValues();
     }
 
     function migrateContract(address _newContractAddress) public onlyGov {
@@ -307,7 +321,7 @@ contract DexynthStakingV1 is Ownable {
 
     // Manage addresses
     function setGov(address _value) public onlyGov {
-        require(_value != address(0), "ADDRESS_0");
+        if (_value == address(0)) revert AddressZero();
         govAddress = _value;
         // Event
         emit GovFundUpdated(_value);
