@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.7;
+pragma solidity 0.8.28;
 
 import "forge-std/Test.sol";
 import "../src/DexynthStaking.sol";
@@ -85,7 +85,7 @@ contract DexynthStakingTest is Test {
 
         // Should work setting new gov by gov address
         staking.setGov(address(0x999));
-        assertEq(staking.govAddress(), address(0x999));
+        assertEq(staking.s_govAddress(), address(0x999));
     }
 
     function testLevelsConfiguration() public {
@@ -166,18 +166,18 @@ contract DexynthStakingTest is Test {
     // --- Epochs Tests ---
 
     function testEpochClosingByStake() public {
-        assertEq(staking.lastClosedEpochIndex() + 1, 1);
+        assertEq(staking.s_lastClosedEpochIndex() + 1, 1);
         
         vm.warp(block.timestamp + 95 days); // 95 days -> 6 epochs
         
         vm.prank(user1);
         staking.stake(50 ether, 0);
         
-        assertEq(staking.lastClosedEpochIndex() + 1, 7);
+        assertEq(staking.s_lastClosedEpochIndex() + 1, 7);
     }
 
     function testEpochClosingByUnstakeHarvest() public {
-        assertEq(staking.lastClosedEpochIndex() + 1, 1);
+        assertEq(staking.s_lastClosedEpochIndex() + 1, 1);
         
         staking.addStakingReward(6600 ether);
         
@@ -189,7 +189,7 @@ contract DexynthStakingTest is Test {
         vm.prank(user1);
         staking.unstake(0);
         
-        assertEq(staking.lastClosedEpochIndex() + 1, 7);
+        assertEq(staking.s_lastClosedEpochIndex() + 1, 7);
     }
 
     function testTotalRewards() public {
@@ -199,7 +199,7 @@ contract DexynthStakingTest is Test {
         staking.checkForClosingEpochs();
         
         for (uint32 i = 1; i < 7; i++) {
-            (uint256 totalRewards, , , ) = staking.epoch(i);
+            (uint256 totalRewards, , , ) = staking.s_epoch(i);
             assertGt(totalRewards, 8782.1 ether);
             assertLt(totalRewards, 8782.3 ether);
         }
@@ -207,14 +207,14 @@ contract DexynthStakingTest is Test {
 
     function testLeftRewards() public {
         staking.addStakingReward(55621 ether);
-        uint256 totalRewardsInitial = staking.accRewards();
+        uint256 totalRewardsInitial = staking.s_accRewards();
         
         vm.warp(block.timestamp + 95 days);
         staking.checkForClosingEpochs();
         
         uint256 tempRewards = 0;
         for (uint32 i = 1; i < 7; i++) {
-            (uint256 epochRewards, , , ) = staking.epoch(i); // Note: JS test had a bug using epoch(1) in loop, but logic implies summing all. I'll sum all.
+            (uint256 epochRewards, , , ) = staking.s_epoch(i); // Note: JS test had a bug using epoch(1) in loop, but logic implies summing all. I'll sum all.
             // Wait, JS test said: const epoch = await stakingContract.epoch(1); inside the loop i=1..7. That looks like a bug in the JS test?
             // "const epoch = await stakingContract.epoch(1);" -> It was always reading epoch 1?
             // "tempRewards += epoch[0];"
@@ -243,14 +243,14 @@ contract DexynthStakingTest is Test {
         // So summing epoch 1 six times is roughly equivalent to summing epochs 1-6.
         // So I will implement the loop correctly using 'i'.
         
-        uint256 rewardsLeft = staking.accRewards();
+        uint256 rewardsLeft = staking.s_accRewards();
         // Note: In Solidity we can't easily check "total - temp == left" due to precision, but let's try exact match first.
         // The JS test did: expect(rewardsLeft).to.equal(totalRewards - tempRewards);
         
         // Let's recalculate tempRewards correctly
         tempRewards = 0;
         for (uint32 i = 1; i < 7; i++) {
-            (uint256 epochRewards, , , ) = staking.epoch(i);
+            (uint256 epochRewards, , , ) = staking.s_epoch(i);
             tempRewards += epochRewards;
         }
         
@@ -299,11 +299,11 @@ contract DexynthStakingTest is Test {
         // So current epoch is 1.
         // So staking goes to epoch 1. Correct.
 
-        (uint256 acc0) = staking.accStakedTokensPerEpochAndLevel(1, 0);
-        (uint256 acc1) = staking.accStakedTokensPerEpochAndLevel(1, 1);
-        (uint256 acc2) = staking.accStakedTokensPerEpochAndLevel(1, 2);
-        (uint256 acc3) = staking.accStakedTokensPerEpochAndLevel(1, 3);
-        (uint256 acc4) = staking.accStakedTokensPerEpochAndLevel(1, 4);
+        (uint256 acc0) = staking.s_accStakedTokensPerEpochAndLevel(1, 0);
+        (uint256 acc1) = staking.s_accStakedTokensPerEpochAndLevel(1, 1);
+        (uint256 acc2) = staking.s_accStakedTokensPerEpochAndLevel(1, 2);
+        (uint256 acc3) = staking.s_accStakedTokensPerEpochAndLevel(1, 3);
+        (uint256 acc4) = staking.s_accStakedTokensPerEpochAndLevel(1, 4);
 
         assertEq(acc0, 350 ether);
         assertEq(acc1, 425 ether);
@@ -316,7 +316,7 @@ contract DexynthStakingTest is Test {
         vm.warp(block.timestamp + 30 days + 100);
         staking.checkForClosingEpochs();
 
-        (, uint256 totalTokensBoosted, , ) = staking.epoch(1);
+        (, uint256 totalTokensBoosted, , ) = staking.s_epoch(1);
         assertEq(totalTokensBoosted, 3238.75 ether);
     }
 
@@ -324,10 +324,10 @@ contract DexynthStakingTest is Test {
         vm.warp(block.timestamp + 30 days + 100);
         staking.checkForClosingEpochs();
 
-        (, , uint40 start0, uint40 end0) = staking.epoch(0);
-        (, , uint40 start1, uint40 end1) = staking.epoch(1);
-        (, , uint40 start2, uint40 end2) = staking.epoch(2);
-        uint32 duration = staking.epochDuration();
+        (, , uint40 start0, uint40 end0) = staking.s_epoch(0);
+        (, , uint40 start1, uint40 end1) = staking.s_epoch(1);
+        (, , uint40 start2, uint40 end2) = staking.s_epoch(2);
+        uint32 duration = staking.s_epochDuration();
 
         assertEq(start1, end0 + 1);
         assertEq(end1, start1 + duration);
@@ -366,11 +366,11 @@ contract DexynthStakingTest is Test {
         assertEq(balanceUser2Before - balanceUser2After, 1800 ether);
 
                 // Check staked tokens mapping
-        (uint256 staked1a) = staking.stakedTokensPerWalletAndEpochAndLevel(user1, 1, 0);
-        (uint256 staked1b) = staking.stakedTokensPerWalletAndEpochAndLevel(user1, 1, 4);
+        (uint256 staked1a) = staking.s_stakedTokensPerWalletAndEpochAndLevel(user1, 1, 0);
+        (uint256 staked1b) = staking.s_stakedTokensPerWalletAndEpochAndLevel(user1, 1, 4);
         assertEq(staked1a + staked1b, 1000 ether);
 
-        (uint256 staked2) = staking.stakedTokensPerWalletAndEpochAndLevel(user2, 1, 1);
+        (uint256 staked2) = staking.s_stakedTokensPerWalletAndEpochAndLevel(user2, 1, 1);
         assertEq(staked2, 1800 ether);
     }
 
@@ -383,8 +383,8 @@ contract DexynthStakingTest is Test {
         vm.prank(user2);
         staking.stake(1800 ether, 1);
 
-        (uint256 totalStaked1, uint256 totalHarvested1, uint64 index1, uint32 lastEpoch1) = staking.user(user1);
-        (uint256 totalStaked2, uint256 totalHarvested2, uint64 index2, uint32 lastEpoch2) = staking.user(user2);
+        (uint256 totalStaked1, uint256 totalHarvested1, uint64 index1, uint32 lastEpoch1) = staking.s_user(user1);
+        (uint256 totalStaked2, uint256 totalHarvested2, uint64 index2, uint32 lastEpoch2) = staking.s_user(user2);
 
         assertEq(totalStaked1, 1000 ether);
         assertEq(totalStaked2, 1800 ether);
@@ -405,9 +405,9 @@ contract DexynthStakingTest is Test {
         vm.prank(user2);
         staking.stake(1800 ether, 1);
 
-        (uint256 staked1a, , uint32 start1a, , uint8 level1a, ) = staking.stakeInfo(user1, 0);
-        (uint256 staked1b, , uint32 start1b, , uint8 level1b, ) = staking.stakeInfo(user1, 1);
-        (uint256 staked2, , uint32 start2, , uint8 level2, ) = staking.stakeInfo(user2, 0);
+        (uint256 staked1a, , uint32 start1a, , uint8 level1a, ) = staking.s_stakeInfo(user1, 0);
+        (uint256 staked1b, , uint32 start1b, , uint8 level1b, ) = staking.s_stakeInfo(user1, 1);
+        (uint256 staked2, , uint32 start2, , uint8 level2, ) = staking.s_stakeInfo(user2, 0);
 
         assertEq(staked1a, 600 ether);
         assertEq(staked1b, 400 ether);
@@ -501,8 +501,8 @@ contract DexynthStakingTest is Test {
         vm.prank(user2);
         staking.unstake(0);
 
-        (uint256 totalStaked1, , , ) = staking.user(user1);
-        (uint256 totalStaked2, , , ) = staking.user(user2);
+        (uint256 totalStaked1, , , ) = staking.s_user(user1);
+        (uint256 totalStaked2, , , ) = staking.s_user(user2);
 
         assertEq(totalStaked1, 400 ether);
         assertEq(totalStaked2, 0);
@@ -525,9 +525,9 @@ contract DexynthStakingTest is Test {
         vm.prank(user2);
         staking.unstake(0);
 
-        (, , , , , bool unstaked1a) = staking.stakeInfo(user1, 0);
-        (, , , , , bool unstaked1b) = staking.stakeInfo(user1, 1);
-        (, , , , , bool unstaked2) = staking.stakeInfo(user2, 0);
+        (, , , , , bool unstaked1a) = staking.s_stakeInfo(user1, 0);
+        (, , , , , bool unstaked1b) = staking.s_stakeInfo(user1, 1);
+        (, , , , , bool unstaked2) = staking.s_stakeInfo(user2, 0);
 
         assertEq(unstaked1a, true);
         assertEq(unstaked1b, false);
@@ -637,8 +637,8 @@ contract DexynthStakingTest is Test {
         vm.prank(user2);
         staking.harvest();
 
-        (, uint256 totalHarvested1, , uint32 lastEpoch1) = staking.user(user1);
-        (, uint256 totalHarvested2, , uint32 lastEpoch2) = staking.user(user2);
+        (, uint256 totalHarvested1, , uint32 lastEpoch1) = staking.s_user(user1);
+        (, uint256 totalHarvested2, , uint32 lastEpoch2) = staking.s_user(user2);
 
         assertGt(totalHarvested1, 3600 ether);
         assertGt(totalHarvested2, 6000 ether);
@@ -714,12 +714,12 @@ contract DexynthStakingTest is Test {
         assertEq(balanceBefore - balanceAfter, amount);
 
         // Verify stake info
-        (uint256 staked, , , , uint8 stakedLevel, ) = staking.stakeInfo(user1, 0);
+        (uint256 staked, , , , uint8 stakedLevel, ) = staking.s_stakeInfo(user1, 0);
         assertEq(staked, amount);
         assertEq(stakedLevel, level);
 
         // Verify user totals
-        (uint256 totalStaked, , , ) = staking.user(user1);
+        (uint256 totalStaked, , , ) = staking.s_user(user1);
         assertEq(totalStaked, amount);
     }
 
