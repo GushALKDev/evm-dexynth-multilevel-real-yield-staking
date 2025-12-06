@@ -10,6 +10,10 @@
 - **Loop Optimization**: Implemented `unchecked` arithmetic in for-loops to save gas on increment operations.
 - **Storage Caching**: Implemented local variable caching for storage reads (SLOAD) in critical loops (`harvest`, `stake`), minimizing expensive storage access.
 
+### 🧪 Advanced Testing Strategy
+- **Fuzzing Tests**: Implemented property-based testing using Foundry's Fuzzing capabilities (`testFuzz_Stake`, `testFuzz_Unstake`, `testFuzz_Harvest`). This allows testing the contract against thousands of random input combinations to ensure robustness and edge-case handling.
+- **State-Dependent Fuzzing**: Created complex fuzzing scenarios that simulate time passage and state changes (staking -> waiting -> unstaking/harvesting) to verify logic consistency over time.
+
 ### 🛠️ Tooling Migration: Hardhat → Foundry
 - **Complete Migration**: Replaced Hardhat with **Foundry** for a faster and more robust development environment.
 - **Solidity-Native Testing**: Ported all JavaScript tests to Solidity (`DexynthStaking.t.sol`), enabling direct interaction with contracts and faster execution.
@@ -17,6 +21,27 @@
   - Added `vm.warp` for precise time manipulation in tests.
   - Configured `via_ir = true` for better optimization.
   - Set up Mock ERC20 tokens (`DEXY`, `USDT`) for isolated testing.
+
+## Running the Project
+
+### Prerequisites
+- [Foundry](https://book.getfoundry.sh/getting-started/installation)
+
+### Build
+```bash
+forge build
+```
+
+### Test
+Run the full test suite (Unit + Fuzzing):
+```bash
+forge test
+```
+
+Run with gas report:
+```bash
+forge test --gas-report
+```
 
 ---
 
@@ -52,7 +77,7 @@ The contract offers five staking levels, each with different lock periods and re
 ### **Staking**
 Allows users to lock $DEXY tokens in a specific staking level.  
 ```solidity
-function stake(uint _amount, uint _level) public;
+function stake(uint256 _amount, uint8 _level) external;
 ```
 - `_amount`: Number of $DEXY tokens to stake (18 decimals).  
 - `_level`: Desired staking level (0-4).  
@@ -60,7 +85,7 @@ function stake(uint _amount, uint _level) public;
 ### **Unstaking**
 Enables users to withdraw their staked tokens after the lock period ends.  
 ```solidity
-function unstake(uint _stakeIndex) public;
+function unstake(uint64 _stakeIndex) external;
 ```
 - `_stakeIndex`: Index of the user's staking position.
 
@@ -72,7 +97,7 @@ function harvest() public;
 ### **Adding Rewards**  
 Allows administrators to deposit $USDT rewards into the staking pool.  
 ```solidity
-function addStakingRewards(uint _amount) public;
+function addStakingReward(uint256 _amount) external;
 ```
 - `_amount`: Amount of $USDT to add to the pool (18 decimals).
 
@@ -96,8 +121,8 @@ The Excel model served as a reference for comparison with unit-tests and on-chai
 
 ---
 
-### **Unit Tests**  
-After validating the logic in Excel, unit tests were created to replicate and rigorously verify the functionality on-chain. The unit tests, found in [dexynthStaking.test.js](./test/dexynthStaking.test.js), focus on critical aspects of the contract, including:
+### **Unit Tests & Fuzzing**  
+After validating the logic in Excel, unit tests were created to replicate and rigorously verify the functionality on-chain. The tests, found in [DexynthStaking.t.sol](./test/DexynthStaking.t.sol), focus on critical aspects of the contract, including:
 
 1. **Staking Functionality**  
    - Ensures users can stake $DEXY tokens at any of the defined levels (0-4).  

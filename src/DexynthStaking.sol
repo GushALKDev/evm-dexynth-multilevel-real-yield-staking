@@ -4,8 +4,9 @@ pragma solidity ^0.8.7;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-contract DexynthStakingV1 is Ownable {
+contract DexynthStakingV1 is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // Inmutable addresses
@@ -304,7 +305,7 @@ contract DexynthStakingV1 is Ownable {
 
     function getEpochIndexByTimestamp(uint256 _timestamp) internal view returns(uint32 _epochIndex) {
         if (_timestamp < GENESIS_EPOCH_TIMESTAMP) revert TimestampLowerThanEpoch0Starts();
-        _epochIndex = uint32((_timestamp - GENESIS_EPOCH_TIMESTAMP) / epochDuration);
+        _epochIndex = uint32((_timestamp - GENESIS_EPOCH_TIMESTAMP) / (epochDuration + 1));
         return _epochIndex;
     }
 

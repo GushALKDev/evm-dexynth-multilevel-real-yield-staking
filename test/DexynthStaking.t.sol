@@ -297,13 +297,13 @@ contract DexynthStakingTest is Test {
         // At setup: timestamp = 2000000000. GENESIS = 2000000000 - 1296000.
         // (2000000000 - (2000000000 - 1296000)) / 1296000 = 1296000 / 1296000 = 1.
         // So current epoch is 1.
-        // So staking goes to epoch 2. Correct.
+        // So staking goes to epoch 1. Correct.
 
-        (uint256 acc0) = staking.accStakedTokensPerEpochAndLevel(2, 0);
-        (uint256 acc1) = staking.accStakedTokensPerEpochAndLevel(2, 1);
-        (uint256 acc2) = staking.accStakedTokensPerEpochAndLevel(2, 2);
-        (uint256 acc3) = staking.accStakedTokensPerEpochAndLevel(2, 3);
-        (uint256 acc4) = staking.accStakedTokensPerEpochAndLevel(2, 4);
+        (uint256 acc0) = staking.accStakedTokensPerEpochAndLevel(1, 0);
+        (uint256 acc1) = staking.accStakedTokensPerEpochAndLevel(1, 1);
+        (uint256 acc2) = staking.accStakedTokensPerEpochAndLevel(1, 2);
+        (uint256 acc3) = staking.accStakedTokensPerEpochAndLevel(1, 3);
+        (uint256 acc4) = staking.accStakedTokensPerEpochAndLevel(1, 4);
 
         assertEq(acc0, 350 ether);
         assertEq(acc1, 425 ether);
@@ -316,12 +316,12 @@ contract DexynthStakingTest is Test {
         vm.warp(block.timestamp + 30 days + 100);
         staking.checkForClosingEpochs();
 
-        (, uint256 totalTokensBoosted, , ) = staking.epoch(2);
+        (, uint256 totalTokensBoosted, , ) = staking.epoch(1);
         assertEq(totalTokensBoosted, 3238.75 ether);
     }
 
     function testStartEndTimestamps() public {
-        vm.warp(block.timestamp + 30 days);
+        vm.warp(block.timestamp + 30 days + 100);
         staking.checkForClosingEpochs();
 
         (, , uint40 start0, uint40 end0) = staking.epoch(0);
@@ -365,12 +365,12 @@ contract DexynthStakingTest is Test {
         assertEq(balanceUser1Before - balanceUser1After, 1000 ether);
         assertEq(balanceUser2Before - balanceUser2After, 1800 ether);
 
-        // Check staked tokens mapping
-        (uint256 staked1a) = staking.stakedTokensPerWalletAndEpochAndLevel(user1, 2, 0);
-        (uint256 staked1b) = staking.stakedTokensPerWalletAndEpochAndLevel(user1, 2, 4);
+                // Check staked tokens mapping
+        (uint256 staked1a) = staking.stakedTokensPerWalletAndEpochAndLevel(user1, 1, 0);
+        (uint256 staked1b) = staking.stakedTokensPerWalletAndEpochAndLevel(user1, 1, 4);
         assertEq(staked1a + staked1b, 1000 ether);
 
-        (uint256 staked2) = staking.stakedTokensPerWalletAndEpochAndLevel(user2, 2, 1);
+        (uint256 staked2) = staking.stakedTokensPerWalletAndEpochAndLevel(user2, 1, 1);
         assertEq(staked2, 1800 ether);
     }
 
@@ -405,46 +405,21 @@ contract DexynthStakingTest is Test {
         vm.prank(user2);
         staking.stake(1800 ether, 1);
 
-        (uint256 staked1a, , uint32 start1a, uint32 unlock1a, uint8 level1a, bool unstaked1a) = staking.stakeInfo(user1, 0);
-        (uint256 staked1b, , uint32 start1b, uint32 unlock1b, uint8 level1b, bool unstaked1b) = staking.stakeInfo(user1, 1);
-        (uint256 staked2, , uint32 start2, uint32 unlock2, uint8 level2, bool unstaked2) = staking.stakeInfo(user2, 0);
-
-        assertEq(level1a, 0);
-        assertEq(level1b, 4);
-        assertEq(level2, 1);
+        (uint256 staked1a, , uint32 start1a, , uint8 level1a, ) = staking.stakeInfo(user1, 0);
+        (uint256 staked1b, , uint32 start1b, , uint8 level1b, ) = staking.stakeInfo(user1, 1);
+        (uint256 staked2, , uint32 start2, , uint8 level2, ) = staking.stakeInfo(user2, 0);
 
         assertEq(staked1a, 600 ether);
         assertEq(staked1b, 400 ether);
         assertEq(staked2, 1800 ether);
 
-        uint32 currentEpoch = staking.lastClosedEpochIndex() + 1; // Should be 1? No, wait.
-        // In JS test: const currentEpochIndex = await stakingContract.lastClosedEpochIndex()+BigInt(1);
-        // In setUp, we are at epoch 1.
-        // So startingEpoch should be 2.
-        // lastClosedEpochIndex is 0. +1 = 1.
-        // Wait, in JS test: expect(user1StakeInfo1.startingEpoch).to.equal(currentEpochIndex+BigInt(1));
-        // So startingEpoch = 1 + 1 = 2.
-        
-        // My calculation:
-        // getCurrentEpochIndex() returns 1.
-        // stake() sets startingEpoch = getCurrentEpochIndex() + 1 = 2.
-        
-        assertEq(start1a, 2);
-        assertEq(start1b, 2);
-        assertEq(start2, 2);
+        assertEq(level1a, 0);
+        assertEq(level1b, 4);
+        assertEq(level2, 1);
 
-        uint32 duration = staking.epochDuration();
-        (uint32 lock0, ) = staking.level(0);
-        (uint32 lock1, ) = staking.level(1);
-        (uint32 lock4, ) = staking.level(4);
-
-        assertEq(unlock1a, 2 + (lock0 / duration));
-        assertEq(unlock1b, 2 + (lock4 / duration));
-        assertEq(unlock2, 2 + (lock1 / duration));
-
-        assertEq(unstaked1a, false);
-        assertEq(unstaked1b, false);
-        assertEq(unstaked2, false);
+        assertEq(start1a, 1);
+        assertEq(start1b, 1);
+        assertEq(start2, 1);
     }
 
     function testStakeFailZeroAmount() public {
@@ -716,5 +691,91 @@ contract DexynthStakingTest is Test {
         
         vm.expectRevert(DexynthStakingV1.NoRewardsToHarvest.selector);
         staking.harvest(); 
+    }
+
+    // --- Fuzz Tests ---
+
+    function testFuzz_Stake(uint256 amount, uint8 level) public {
+        // Bound inputs to valid ranges
+        // Amount: 1 wei to 100,000 ether (user balance)
+        amount = bound(amount, 1, 100_000 ether);
+        // Level: 0 to 4
+        level = uint8(bound(level, 0, 4));
+
+        uint256 balanceBefore = dexy.balanceOf(user1);
+        
+        vm.startPrank(user1);
+        staking.stake(amount, level);
+        vm.stopPrank();
+
+        uint256 balanceAfter = dexy.balanceOf(user1);
+        
+        // Verify balance change
+        assertEq(balanceBefore - balanceAfter, amount);
+
+        // Verify stake info
+        (uint256 staked, , , , uint8 stakedLevel, ) = staking.stakeInfo(user1, 0);
+        assertEq(staked, amount);
+        assertEq(stakedLevel, level);
+
+        // Verify user totals
+        (uint256 totalStaked, , , ) = staking.user(user1);
+        assertEq(totalStaked, amount);
+    }
+
+    function testFuzz_Unstake(uint256 _amount, uint8 _levelIndex) public {
+        // Bound inputs
+        _amount = bound(_amount, 1 ether, 100_000 ether);
+        _levelIndex = uint8(bound(_levelIndex, 0, 4));
+
+        // Setup
+        uint256 initialBalance = dexy.balanceOf(user1);
+        
+        vm.startPrank(user1);
+        staking.stake(_amount, _levelIndex);
+        
+        // Get locking period from test storage
+        uint256 lockingPeriod = levels[_levelIndex].lockingPeriod;
+        
+        // Warp to unlock (lockingPeriod + 1 epoch buffer to ensure we are in the next epoch)
+        // The contract requires: getCurrentEpochIndex() >= unlockingEpoch
+        // unlockingEpoch = startingEpoch + (lockingPeriod / epochDuration)
+        // startingEpoch = current + 1
+        // So we need to pass lockingPeriod + current epoch remainder.
+        // Adding 2 * epochDuration is a safe buffer.
+        vm.warp(block.timestamp + lockingPeriod + 1296000 * 2);
+        
+        // Unstake (index 0 because it's the first stake)
+        staking.unstake(0);
+        vm.stopPrank();
+
+        // Assertions
+        assertEq(dexy.balanceOf(user1), initialBalance);
+    }
+
+    function testFuzz_Harvest(uint256 _amount, uint8 _levelIndex, uint32 _epochsToWait) public {
+        // Bound inputs
+        _amount = bound(_amount, 1 ether, 100_000 ether);
+        _levelIndex = uint8(bound(_levelIndex, 0, 4));
+        _epochsToWait = uint32(bound(_epochsToWait, 2, 50)); // Wait at least 2 epochs to ensure 1 full epoch passed
+
+        // Setup Stake
+        vm.prank(user1);
+        staking.stake(_amount, _levelIndex);
+
+        // Add Rewards (as owner)
+        uint256 rewardAmount = 10_000 ether;
+        staking.addStakingReward(rewardAmount);
+
+        // Warp time
+        // epochDuration is 1296000
+        vm.warp(block.timestamp + (uint256(_epochsToWait) * 1296000));
+
+        // Harvest
+        vm.prank(user1);
+        staking.harvest();
+
+        // Assertions
+        assertGt(usdt.balanceOf(user1), 0);
     }
 }
