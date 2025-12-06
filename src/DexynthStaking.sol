@@ -140,6 +140,8 @@ contract DexynthStakingV1 is Ownable {
     }
 
     function stake(uint256 _amount, uint8 _level /* starting from 0 */) external {
+        if (_amount == 0) revert WrongParams();
+        if (_level >= NUMBER_OF_LEVELS) revert WrongParams();
         // Check for closing epochs first
         checkForClosingEpochs();
         // Deposit DEXYs to the pool
