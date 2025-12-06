@@ -146,19 +146,24 @@ contract DexynthStakingV1 is Ownable {
         checkForClosingEpochs();
         // Deposit DEXYs to the pool
         IERC20(DEXY).safeTransferFrom(msg.sender, address(this), _amount);
+        
+        uint64 userStakeIndex = user[msg.sender].stakeIndex;
+        uint32 currentEpochIndex = getCurrentEpochIndex();
+        uint32 startingEpoch = currentEpochIndex + 1;
+
         // Create stakeInfo
-        stakeInfo[msg.sender][user[msg.sender].stakeIndex].timestamp = uint40(block.timestamp);
-        stakeInfo[msg.sender][user[msg.sender].stakeIndex].stakedDEXYs = _amount;
-        stakeInfo[msg.sender][user[msg.sender].stakeIndex].level = _level;
-        stakeInfo[msg.sender][user[msg.sender].stakeIndex].startingEpoch = getCurrentEpochIndex() + 1;
-        stakeInfo[msg.sender][user[msg.sender].stakeIndex].unlockingEpoch = getCurrentEpochIndex() + 1 + (level[_level].lockingPeriod / epochDuration);
+        stakeInfo[msg.sender][userStakeIndex].timestamp = uint40(block.timestamp);
+        stakeInfo[msg.sender][userStakeIndex].stakedDEXYs = _amount;
+        stakeInfo[msg.sender][userStakeIndex].level = _level;
+        stakeInfo[msg.sender][userStakeIndex].startingEpoch = startingEpoch;
+        stakeInfo[msg.sender][userStakeIndex].unlockingEpoch = startingEpoch + (level[_level].lockingPeriod / epochDuration);
         // Accumulate tokens for next epoch
-        accStakedTokensPerEpochAndLevel[getCurrentEpochIndex() + 1][_level].accStakedTokens += _amount;
+        accStakedTokensPerEpochAndLevel[startingEpoch][_level].accStakedTokens += _amount;
         // Update User values
         user[msg.sender].totalStakedDEXYs += _amount; // Total staked tokens
-        stakedTokensPerWalletAndEpochAndLevel[msg.sender][getCurrentEpochIndex() + 1][_level].stakedDEXYs += _amount; // Staked tokens by level
+        stakedTokensPerWalletAndEpochAndLevel[msg.sender][startingEpoch][_level].stakedDEXYs += _amount; // Staked tokens by level
         // accStakedTokensPerWalletAndLevel[msg.sender][_level].accStakedTokens += _amount;
-        user[msg.sender].stakeIndex++;
+        user[msg.sender].stakeIndex = userStakeIndex + 1;
         // Event
         emit DEXYsStaked(msg.sender, _amount);
     }
@@ -196,29 +201,34 @@ contract DexynthStakingV1 is Ownable {
     function harvest() public {
         // Check for closing epochs first
         checkForClosingEpochs();
-        if (((getCurrentEpochIndex()) - (user[msg.sender].lastEpochHarvested + 1)) == 0) revert NoEpochsToHarvest();
+        uint32 currentEpochIndex = getCurrentEpochIndex();
+        uint32 lastEpochHarvested = user[msg.sender].lastEpochHarvested;
+        if ((currentEpochIndex - (lastEpochHarvested + 1)) == 0) revert NoEpochsToHarvest();
         if (user[msg.sender].totalStakedDEXYs == 0) revert NoStakedTokens();
         uint256 totalUserRewards;
         // Harvesting from last epoch harvested to the last closed one
         for (uint8 j = 0; j < NUMBER_OF_LEVELS;) {
+            uint256 currentAccStakedTokens = accStakedTokensPerWalletAndLevel[msg.sender][j].accStakedTokens;
+            uint64 boostP = level[j].boostP;
             // Get the accumulated tokens from last epoch
-            for (uint32 i = user[msg.sender].lastEpochHarvested + 1; i <= getCurrentEpochIndex() - 1;) {
+            for (uint32 i = lastEpochHarvested + 1; i <= currentEpochIndex - 1;) {
                 uint256 epochTotalRewards = epoch[i].totalRewards;
                 uint256 epochTotalBoostedStakedTokens = epoch[i].totalTokensBoosted;
                 uint256 payoutPerTokenAtThisLevel;
-                if (epochTotalBoostedStakedTokens * level[j].boostP > 0) {
-                    payoutPerTokenAtThisLevel = (((epochTotalRewards * 1e18) / epochTotalBoostedStakedTokens) * level[j].boostP) /  1e10;
+                if (epochTotalBoostedStakedTokens * boostP > 0) {
+                    payoutPerTokenAtThisLevel = (((epochTotalRewards * 1e18) / epochTotalBoostedStakedTokens) * boostP) /  1e10;
                 }
                 else payoutPerTokenAtThisLevel = 0;
                 // Add the staked tokens after last harvest to the accumulated value
-                accStakedTokensPerWalletAndLevel[msg.sender][j].accStakedTokens += stakedTokensPerWalletAndEpochAndLevel[msg.sender][i][j].stakedDEXYs;
-                totalUserRewards += (payoutPerTokenAtThisLevel * accStakedTokensPerWalletAndLevel[msg.sender][j].accStakedTokens) / 1e18;
+                currentAccStakedTokens += stakedTokensPerWalletAndEpochAndLevel[msg.sender][i][j].stakedDEXYs;
+                totalUserRewards += (payoutPerTokenAtThisLevel * currentAccStakedTokens) / 1e18;
                 unchecked { i++; }
             }
+            accStakedTokensPerWalletAndLevel[msg.sender][j].accStakedTokens = currentAccStakedTokens;
             unchecked { j++; }
             // Store the accumulated tokens after harvest.
         }
-        user[msg.sender].lastEpochHarvested = uint32(getCurrentEpochIndex() - 1);
+        user[msg.sender].lastEpochHarvested = uint32(currentEpochIndex - 1);
         user[msg.sender].totalHarvestedRewards += totalUserRewards;
         if (totalUserRewards == 0) revert NoRewardsToHarvest();
         // Transfer USDT rewards to the user

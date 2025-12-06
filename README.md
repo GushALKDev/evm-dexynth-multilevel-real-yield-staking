@@ -8,6 +8,7 @@
 - **Explicit Types**: Standardized usage of `uint256` instead of implicit `uint` for clarity and consistency.
 - **Visibility Optimization**: Refactored public functions to `external` (`stake`, `unstake`, `harvest`, etc.) to reduce gas costs on function calls.
 - **Loop Optimization**: Implemented `unchecked` arithmetic in for-loops to save gas on increment operations.
+- **Storage Caching**: Implemented local variable caching for storage reads (SLOAD) in critical loops (`harvest`, `stake`), minimizing expensive storage access.
 
 ### 🛠️ Tooling Migration: Hardhat → Foundry
 - **Complete Migration**: Replaced Hardhat with **Foundry** for a faster and more robust development environment.
