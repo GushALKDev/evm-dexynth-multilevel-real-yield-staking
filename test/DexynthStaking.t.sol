@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
+pragma solidity ^0.8.7;
 
 import "forge-std/Test.sol";
 import "../src/DexynthStaking.sol";
@@ -770,6 +770,66 @@ contract DexynthStakingTest is Test {
         // Warp time
         // epochDuration is 1296000
         vm.warp(block.timestamp + (uint256(_epochsToWait) * 1296000));
+
+        // Harvest
+        vm.prank(user1);
+        staking.harvest();
+
+        // Assertions
+        assertGt(usdt.balanceOf(user1), 0);
+    }
+
+    function testFuzz_MultipleStakes(uint256 amount1, uint8 level1, uint256 amount2, uint8 level2) public {
+        // Bound inputs
+        amount1 = bound(amount1, 1 ether, 50_000 ether);
+        amount2 = bound(amount2, 1 ether, 50_000 ether); // Ensure sum doesn't exceed 100k balance
+        level1 = uint8(bound(level1, 0, 4));
+        level2 = uint8(bound(level2, 0, 4));
+
+        vm.startPrank(user1);
+        staking.stake(amount1, level1);
+        staking.stake(amount2, level2);
+        vm.stopPrank();
+
+        // Verify User Totals
+        (uint256 totalStaked, , uint64 stakeIndex, ) = staking.s_user(user1);
+        assertEq(totalStaked, amount1 + amount2);
+        assertEq(stakeIndex, 2);
+
+        // Verify Individual Stakes
+        (uint256 staked1, , , , uint8 l1, ) = staking.s_stakeInfo(user1, 0);
+        (uint256 staked2, , , , uint8 l2, ) = staking.s_stakeInfo(user1, 1);
+
+        assertEq(staked1, amount1);
+        assertEq(l1, level1);
+        assertEq(staked2, amount2);
+        assertEq(l2, level2);
+    }
+
+    function testFuzz_DynamicRewards(uint256 stakeAmount, uint8 levelIndex, uint256 rewardAmount, uint32 epochsToWait) public {
+        // Bound inputs
+        stakeAmount = bound(stakeAmount, 1 ether, 100_000 ether);
+        levelIndex = uint8(bound(levelIndex, 0, 4));
+        // Reward: from 1 ether to 1M ether
+        rewardAmount = bound(rewardAmount, 1 ether, 1_000_000 ether); 
+        epochsToWait = uint32(bound(epochsToWait, 2, 50));
+
+        // Setup Stake
+        vm.prank(user1);
+        staking.stake(stakeAmount, levelIndex);
+
+        // Mint and Approve Rewards
+        usdt.transfer(address(this), rewardAmount); // Ensure test contract has enough USDT (it minted 10M in constructor?)
+        // Actually, usdt is a MockToken, let's check setUp.
+        // usdt = new USDTToken(); -> Mints 100M to msg.sender (test contract)
+        // So we have enough balance. Just need approval.
+        usdt.approve(address(staking), rewardAmount);
+
+        // Add Rewards
+        staking.addStakingReward(rewardAmount);
+
+        // Warp time
+        vm.warp(block.timestamp + (uint256(epochsToWait) * 1296000));
 
         // Harvest
         vm.prank(user1);
