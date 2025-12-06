@@ -9,10 +9,12 @@
 - **Visibility Optimization**: Refactored public functions to `external` (`stake`, `unstake`, `harvest`, etc.) to reduce gas costs on function calls.
 - **Loop Optimization**: Implemented `unchecked` arithmetic in for-loops to save gas on increment operations.
 - **Storage Caching**: Implemented local variable caching for storage reads (SLOAD) in critical loops (`harvest`, `stake`), minimizing expensive storage access.
+- **Code Style & Safety**: Adopted Chainlink-style naming conventions (`s_` for storage, `i_` for immutables) to prevent storage vs. memory confusion and locked compiler version to `0.8.28` for deterministic builds.
 
 ### 🧪 Advanced Testing Strategy
 - **Fuzzing Tests**: Implemented property-based testing using Foundry's Fuzzing capabilities (`testFuzz_Stake`, `testFuzz_Unstake`, `testFuzz_Harvest`). This allows testing the contract against thousands of random input combinations to ensure robustness and edge-case handling.
 - **State-Dependent Fuzzing**: Created complex fuzzing scenarios that simulate time passage and state changes (staking -> waiting -> unstaking/harvesting) to verify logic consistency over time.
+- **Advanced Scenarios**: Added `testFuzz_MultipleStakes` to verify state consistency with multiple deposits and `testFuzz_DynamicRewards` to validate reward logic under randomized reward injection rates.
 
 ### 🛠️ Tooling Migration: Hardhat → Foundry
 - **Complete Migration**: Replaced Hardhat with **Foundry** for a faster and more robust development environment.
