@@ -28,10 +28,10 @@ contract DexynthStakingV1 is Ownable {
     mapping(address => User) public user;
     mapping(uint32 => Epoch) public epoch;
     mapping(uint8 => Level) public level;
-    mapping(address => mapping(uint64 => Stake)) public stakeInfo;                                                        // wallet => stakeIndex = Stake
-    mapping(address => mapping(uint32 => mapping(uint8 => Batch))) public stakedTokensPerWalletAndEpochAndLevel;           // wallet => epoch => level = Batch
-    mapping(uint32 => mapping(uint8 => Accumulated)) public accStakedTokensPerEpochAndLevel;                               // epoch  => level = Accumulated
-    mapping(address => mapping(uint8 => Accumulated)) public accStakedTokensPerWalletAndLevel;                           // wallet => level = Accumulated
+    mapping(address => mapping(uint64 => Stake)) public stakeInfo;                                                  // wallet => stakeIndex = Stake
+    mapping(address => mapping(uint32 => mapping(uint8 => Batch))) public stakedTokensPerWalletAndEpochAndLevel;    // wallet => epoch => level = Batch
+    mapping(uint32 => mapping(uint8 => Accumulated)) public accStakedTokensPerEpochAndLevel;                        // epoch  => level = Accumulated
+    mapping(address => mapping(uint8 => Accumulated)) public accStakedTokensPerWalletAndLevel;                      // wallet => level = Accumulated
 
 
     // Structs
@@ -60,8 +60,8 @@ contract DexynthStakingV1 is Ownable {
     }
 
     struct Level {
-        uint64 boostP;                      // 8 bytes
         uint32 lockingPeriod;               // 4 bytes (Locking period in seconds)
+        uint64 boostP;                      // 8 bytes
     }
 
     struct Epoch {
@@ -139,7 +139,7 @@ contract DexynthStakingV1 is Ownable {
         _;
     }
 
-    function stake(uint256 _amount, uint8 _level /* starting from 0 */) public {
+    function stake(uint256 _amount, uint8 _level /* starting from 0 */) external {
         // Check for closing epochs first
         checkForClosingEpochs();
         // Deposit DEXYs to the pool
@@ -161,7 +161,7 @@ contract DexynthStakingV1 is Ownable {
         emit DEXYsStaked(msg.sender, _amount);
     }
 
-    function unstake(uint64 _stakeIndex) public {
+    function unstake(uint64 _stakeIndex) external {
         // One unstake per stake
         if (stakeInfo[msg.sender][_stakeIndex].unstacked) revert AlreadyUnstaked();
         // Stake status
@@ -225,7 +225,7 @@ contract DexynthStakingV1 is Ownable {
         emit RewardsHarvested(msg.sender, totalUserRewards);
     }
 
-    function addStakingReward(uint256 _amount) public {
+    function addStakingReward(uint256 _amount) external {
         IERC20(USDT).safeTransferFrom(msg.sender, address(this), _amount);
         accRewards += _amount;
     }
@@ -251,10 +251,10 @@ contract DexynthStakingV1 is Ownable {
         return getEpochIndexByTimestamp(block.timestamp);
     }
 
-    function getLevels() public view returns(uint256[2][5] memory) {
+    function getLevels() external view returns(uint256[2][5] memory) {
         uint256[2][5] memory levels;
         for (uint8 i=0; i<NUMBER_OF_LEVELS;) {
-            levels[i] = [level[i].lockingPeriod,level[i].boostP];
+            levels[i] = [uint256(level[i].lockingPeriod), uint256(level[i].boostP)];
             unchecked { i++; }
         }
         return levels;
@@ -304,7 +304,7 @@ contract DexynthStakingV1 is Ownable {
     }
 
     // Manage parameters
-    function checkboostP(Level[5] memory _levels) internal view {
+    function checkboostP(Level[5] memory _levels) internal pure {
         // Level format [lockingPeriod, boostP]
         bool failed;
         uint256 totalBoost;
@@ -317,7 +317,7 @@ contract DexynthStakingV1 is Ownable {
         if (failed) revert WrongValues();
     }
 
-    function migrateContract(address _newContractAddress) public onlyGov {
+    function migrateContract(address _newContractAddress) external onlyGov {
         uint256 USDTBalance = IERC20(USDT).balanceOf(address(this));
         uint256 DEXYBalance = IERC20(DEXY).balanceOf(address(this));
         IERC20(USDT).safeTransfer(_newContractAddress, USDTBalance);
@@ -327,14 +327,14 @@ contract DexynthStakingV1 is Ownable {
     }
 
     // Manage addresses
-    function setGov(address _value) public onlyGov {
+    function setGov(address _value) external onlyGov {
         if (_value == address(0)) revert AddressZero();
         govAddress = _value;
         // Event
         emit GovFundUpdated(_value);
     }
 
-    function setLevels(Level[5] memory _levels) public onlyGov {
+    function setLevels(Level[5] memory _levels) external onlyGov {
         // Level format [lockingPeriod, boostP]
         checkboostP(_levels);
         for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
