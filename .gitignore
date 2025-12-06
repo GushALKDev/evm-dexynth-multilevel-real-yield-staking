@@ -3,4 +3,6 @@ node_modules
 coverage*
 artifacts
 cache
+lib/
+out/
 STAKING.xlsx
