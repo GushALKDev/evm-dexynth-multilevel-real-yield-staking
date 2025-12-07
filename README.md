@@ -7,8 +7,8 @@
 - **Custom Errors**: Replaced string revert messages with Custom Errors (e.g., `error StakeStillLocked()`) to save deployment and runtime gas.
 - **Explicit Types**: Standardized usage of `uint256` instead of implicit `uint` for clarity and consistency.
 - **Visibility Optimization**: Refactored public functions to `external` (`stake`, `unstake`, `harvest`, etc.) to reduce gas costs on function calls.
-- **Loop Optimization**: Implemented `unchecked` arithmetic in for-loops to save gas on increment operations.
-- **Storage Caching**: Implemented local variable caching for storage reads (SLOAD) in critical loops (`harvest`, `stake`), minimizing expensive storage access.
+- **Loop Optimization**: Implemented `unchecked` arithmetic in for-loops and epoch math to save gas on increment operations and timestamp calculations.
+- **Storage Caching**: Implemented local variable caching for storage reads (SLOAD) in critical loops (`harvest`, `stake`, `checkForClosingEpochs`), minimizing expensive storage access.
 - **Code Style & Safety**: Adopted Chainlink-style naming conventions (`s_` for storage, `i_` for immutables) to prevent storage vs. memory confusion and locked compiler version to `0.8.28` for deterministic builds.
 
 #### 📊 Gas Performance Improvements

@@ -107,7 +107,7 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         address _USDT,
         Level[5] memory _levels,            // [[lockingPeriod0, boostP0], [lockingPeriod1, boostP1], [lockingPeriod2, boostP2], [lockingPeriod3, boostP3], [lockingPeriod4, boostP4]]
                                             // [[2592000, 6500000000], [7776000, 8500000000], [15552000, 10000000000], [31536000, 11500000000], [62208000, 13500000000]]
-        uint256 _epochDuration                 // Seconds
+        uint256 _epochDuration              // Seconds
     ) {
         // Checking addresses
         if (address(_DEXY) == address(0) || address(_USDT) == address(0)) revert WrongParams();
@@ -244,12 +244,24 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
 
     function checkForClosingEpochs() public {
         uint32 targetEpochIndex = getCurrentEpochIndex();
+        uint32 lastClosedEpochIndex = s_lastClosedEpochIndex;
+        uint32 nextEpochIndex;
+        unchecked {
+            nextEpochIndex = lastClosedEpochIndex + 1;
+        }
+
         // If there are epochs ready for closing
-        if (targetEpochIndex > s_lastClosedEpochIndex+1) {
-            uint32 epochsReadyForClosing = targetEpochIndex - (s_lastClosedEpochIndex+1);
+        if (targetEpochIndex > nextEpochIndex) {
+            uint32 epochsReadyForClosing;
+            unchecked {
+                epochsReadyForClosing = targetEpochIndex - nextEpochIndex;
+            }
             // Calculating rewards for every second
-            (uint40 fromTimestamp,) = getEpochTimestamps(s_lastClosedEpochIndex+1);
-            uint256 secondsFromLastClosedEpoch = (block.timestamp - fromTimestamp);
+            (uint40 fromTimestamp,) = getEpochTimestamps(nextEpochIndex);
+            uint256 secondsFromLastClosedEpoch;
+            unchecked {
+                secondsFromLastClosedEpoch = (block.timestamp - fromTimestamp);
+            }
             uint256 rewardsPerSecond = s_accRewards / secondsFromLastClosedEpoch;
             uint256 rewardsPerEpoch = rewardsPerSecond * s_epochDuration;
             for (uint32 i=0; i<epochsReadyForClosing;) {
@@ -274,26 +286,38 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
 
     function closeCurrentEpoch(uint256 _epochRewards) internal {
         // Closing current epoch...
+        uint32 lastClosedEpochIndex = s_lastClosedEpochIndex;
+        uint32 currentEpochIndex;
+        unchecked {
+            currentEpochIndex = lastClosedEpochIndex + 1;
+        }
+
         // Store rewards
-        s_epoch[s_lastClosedEpochIndex+1].totalRewards = _epochRewards;
+        s_epoch[currentEpochIndex].totalRewards = _epochRewards;
         uint256 tempTotalTokensBoosted;
         for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
-            tempTotalTokensBoosted += (s_accStakedTokensPerEpochAndLevel[s_lastClosedEpochIndex+1][i].accStakedTokens * s_level[i].boostP) / 1e10;
+            tempTotalTokensBoosted += (s_accStakedTokensPerEpochAndLevel[currentEpochIndex][i].accStakedTokens * s_level[i].boostP) / 1e10;
             // Add the accumulated epoch values to the next one
-            s_accStakedTokensPerEpochAndLevel[s_lastClosedEpochIndex + 2][i].accStakedTokens += s_accStakedTokensPerEpochAndLevel[s_lastClosedEpochIndex+1][i].accStakedTokens;
+            s_accStakedTokensPerEpochAndLevel[currentEpochIndex + 1][i].accStakedTokens += s_accStakedTokensPerEpochAndLevel[currentEpochIndex][i].accStakedTokens;
             unchecked { i++; }
         }
         // Set totalTokensBoosted
-        s_epoch[s_lastClosedEpochIndex+1].totalTokensBoosted = tempTotalTokensBoosted;
+        s_epoch[currentEpochIndex].totalTokensBoosted = tempTotalTokensBoosted;
         // Epoch timestamping
-        s_epoch[s_lastClosedEpochIndex+1].startTimestamp = uint40(s_epoch[s_lastClosedEpochIndex].endTimestamp + 1);
-        s_epoch[s_lastClosedEpochIndex+1].endTimestamp = uint40(s_epoch[s_lastClosedEpochIndex+1].startTimestamp + s_epochDuration);
+        uint40 startTimestamp;
+        uint40 endTimestamp;
+        unchecked {
+            startTimestamp = uint40(s_epoch[lastClosedEpochIndex].endTimestamp + 1);
+            endTimestamp = uint40(startTimestamp + s_epochDuration);
+        }
+        s_epoch[currentEpochIndex].startTimestamp = startTimestamp;
+        s_epoch[currentEpochIndex].endTimestamp = endTimestamp;
         // Event
-        emit EpochClosed(s_lastClosedEpochIndex+1, _epochRewards);
+        emit EpochClosed(currentEpochIndex, _epochRewards);
         // Substrate reward from accRewards
         s_accRewards -= _epochRewards;
         // Increment epoch number
-        s_lastClosedEpochIndex++;
+        s_lastClosedEpochIndex = currentEpochIndex;
     }
 
     function getEpochTimestamps(uint32 _epochIndex) internal view returns(uint40, uint40) {
