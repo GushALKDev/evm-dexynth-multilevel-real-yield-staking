@@ -71,7 +71,7 @@ contract DexynthStakingTest is Test {
         vm.warp(2000000000);
     }
 
-    function testDeploy() public {
+    function testDeploy() public view {
         assertEq(staking.owner(), owner);
         assertEq(dexy.owner(), owner);
         assertEq(usdt.owner(), owner);
@@ -154,7 +154,7 @@ contract DexynthStakingTest is Test {
         staking.migrateContract(address(0x999));
     }
 
-    function testGetLevels() public {
+    function testGetLevels() public view {
         uint256[2][5] memory levelsData = staking.getLevels();
         // Check a few values
         assertEq(levelsData[0][0], levels[0].lockingPeriod);
@@ -324,7 +324,7 @@ contract DexynthStakingTest is Test {
         vm.warp(block.timestamp + 30 days + 100);
         staking.checkForClosingEpochs();
 
-        (, , uint40 start0, uint40 end0) = staking.s_epoch(0);
+        (, , , uint40 end0) = staking.s_epoch(0);
         (, , uint40 start1, uint40 end1) = staking.s_epoch(1);
         (, , uint40 start2, uint40 end2) = staking.s_epoch(2);
         uint32 duration = staking.s_epochDuration();

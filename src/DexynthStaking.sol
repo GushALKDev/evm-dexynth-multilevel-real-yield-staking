@@ -25,10 +25,12 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
     // SLOT 1
     uint256 public s_accRewards;              // 32bytes (Accumulated Rewards in USDT)
 
+    // Levels
+    Level[5] public s_levels;
+
     // Mappings
     mapping(address => User) public s_user;
     mapping(uint32 => Epoch) public s_epoch;
-    mapping(uint8 => Level) public s_level;
     mapping(address => mapping(uint64 => Stake)) public s_stakeInfo;                                                  // wallet => stakeIndex = Stake
     mapping(address => mapping(uint32 => mapping(uint8 => Batch))) public s_stakedTokensPerWalletAndEpochAndLevel;    // wallet => epoch => level = Batch
     mapping(uint32 => mapping(uint8 => Accumulated)) public s_accStakedTokensPerEpochAndLevel;                        // epoch  => level = Accumulated
@@ -36,14 +38,14 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
 
     // Structs
     struct User {
-        uint256 totalStakedDEXYs;           // 32 bytes (1e18)
-        uint256 totalHarvestedRewards;      // 32 bytes (1e18)
+        uint128 totalStakedDEXYs;           // 16 bytes (1e18)
+        uint128 totalHarvestedRewards;      // 16 bytes (1e18)
         uint64 stakeIndex;                  // 8 bytes
         uint32 lastEpochHarvested;          // 4 bytes
     }
 
     struct Stake {
-        uint256 stakedDEXYs;                // 32 bytes (1e18)
+        uint128 stakedDEXYs;                // 16 bytes (1e18)
         uint40 timestamp;                   // 5 bytes
         uint32 startingEpoch;               // 4 bytes
         uint32 unlockingEpoch;              // 4 bytes
@@ -52,11 +54,11 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
     }
 
     struct Accumulated {
-        uint256 accStakedTokens;            // 32 bytes (Accumulated staked tokens for the next epoch)
+        uint128 accStakedTokens;            // 16 bytes (Accumulated staked tokens for the next epoch)
     }
 
     struct Batch {
-        uint256 stakedDEXYs;                // 32 bytes (1e18)
+        uint128 stakedDEXYs;                // 16 bytes (1e18)
     }
 
     struct Level {
@@ -65,8 +67,8 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
     }
 
     struct Epoch {
-        uint256 totalRewards;               // 32 bytes (1e18)
-        uint256 totalTokensBoosted;         // 32 bytes (1e18)
+        uint128 totalRewards;               // 16 bytes (1e18)
+        uint128 totalTokensBoosted;         // 16 bytes (1e18)
         uint40 startTimestamp;              // 5 bytes
         uint40 endTimestamp;                // 5 bytes
     }
@@ -123,8 +125,8 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         // Setting levels data
         checkboostP(_levels);
         for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
-            s_level[i].lockingPeriod = _levels[i].lockingPeriod;
-            s_level[i].boostP = _levels[i].boostP;
+            s_levels[i].lockingPeriod = _levels[i].lockingPeriod;
+            s_levels[i].boostP = _levels[i].boostP;
             unchecked { i++; }
         }
         // Setting addresses
@@ -153,15 +155,15 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
 
         // Create stakeInfo
         s_stakeInfo[msg.sender][userStakeIndex].timestamp = uint40(block.timestamp);
-        s_stakeInfo[msg.sender][userStakeIndex].stakedDEXYs = _amount;
+        s_stakeInfo[msg.sender][userStakeIndex].stakedDEXYs = uint128(_amount);
         s_stakeInfo[msg.sender][userStakeIndex].level = _level;
         s_stakeInfo[msg.sender][userStakeIndex].startingEpoch = startingEpoch;
-        s_stakeInfo[msg.sender][userStakeIndex].unlockingEpoch = startingEpoch + (s_level[_level].lockingPeriod / s_epochDuration);
+        s_stakeInfo[msg.sender][userStakeIndex].unlockingEpoch = startingEpoch + (s_levels[_level].lockingPeriod / s_epochDuration);
         // Accumulate tokens for next epoch
-        s_accStakedTokensPerEpochAndLevel[startingEpoch][_level].accStakedTokens += _amount;
+        s_accStakedTokensPerEpochAndLevel[startingEpoch][_level].accStakedTokens += uint128(_amount);
         // Update User values
-        s_user[msg.sender].totalStakedDEXYs += _amount; // Total staked tokens
-        s_stakedTokensPerWalletAndEpochAndLevel[msg.sender][startingEpoch][_level].stakedDEXYs += _amount; // Staked tokens by level
+        s_user[msg.sender].totalStakedDEXYs += uint128(_amount); // Total staked tokens
+        s_stakedTokensPerWalletAndEpochAndLevel[msg.sender][startingEpoch][_level].stakedDEXYs += uint128(_amount); // Staked tokens by level
         // accStakedTokensPerWalletAndLevel[msg.sender][_level].accStakedTokens += _amount;
         s_user[msg.sender].stakeIndex = userStakeIndex + 1;
         // Event
@@ -184,12 +186,12 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
             // Harvest rewards
             harvest();
             // Remove unstaked tokens from just consolidated accumulation.
-            s_accStakedTokensPerWalletAndLevel[msg.sender][_level].accStakedTokens -= _amount;
+            s_accStakedTokensPerWalletAndLevel[msg.sender][_level].accStakedTokens -= uint128(_amount);
         }
-        s_user[msg.sender].totalStakedDEXYs -= _amount;
+        s_user[msg.sender].totalStakedDEXYs -= uint128(_amount);
         // Remove unstaked tokens from mappings
-        s_stakedTokensPerWalletAndEpochAndLevel[msg.sender][_epoch][_level].stakedDEXYs -= _amount;
-        s_accStakedTokensPerEpochAndLevel[getCurrentEpochIndex()][_level].accStakedTokens -= _amount;       
+        s_stakedTokensPerWalletAndEpochAndLevel[msg.sender][_epoch][_level].stakedDEXYs -= uint128(_amount);
+        s_accStakedTokensPerEpochAndLevel[getCurrentEpochIndex()][_level].accStakedTokens -= uint128(_amount);       
         // Mark stake as unstaked
         s_stakeInfo[msg.sender][_stakeIndex].unstacked = true;
         // Transfer DEXYs back to the user
@@ -209,7 +211,7 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         // Harvesting from last epoch harvested to the last closed one
         for (uint8 j = 0; j < NUMBER_OF_LEVELS;) {
             uint256 currentAccStakedTokens = s_accStakedTokensPerWalletAndLevel[msg.sender][j].accStakedTokens;
-            uint64 boostP = s_level[j].boostP;
+            uint64 boostP = s_levels[j].boostP;
             // Get the accumulated tokens from last epoch
             for (uint32 i = lastEpochHarvested + 1; i <= currentEpochIndex - 1;) {
                 uint256 epochTotalRewards = s_epoch[i].totalRewards;
@@ -224,12 +226,12 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
                 totalUserRewards += (payoutPerTokenAtThisLevel * currentAccStakedTokens) / 1e18;
                 unchecked { i++; }
             }
-            s_accStakedTokensPerWalletAndLevel[msg.sender][j].accStakedTokens = currentAccStakedTokens;
+            s_accStakedTokensPerWalletAndLevel[msg.sender][j].accStakedTokens = uint128(currentAccStakedTokens);
             unchecked { j++; }
             // Store the accumulated tokens after harvest.
         }
         s_user[msg.sender].lastEpochHarvested = uint32(currentEpochIndex - 1);
-        s_user[msg.sender].totalHarvestedRewards += totalUserRewards;
+        s_user[msg.sender].totalHarvestedRewards += uint128(totalUserRewards);
         if (totalUserRewards == 0) revert NoRewardsToHarvest();
         // Transfer USDT rewards to the user
         IERC20(USDT).safeTransfer(msg.sender, totalUserRewards);
@@ -278,7 +280,7 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
     function getLevels() external view returns(uint256[2][5] memory) {
         uint256[2][5] memory levels;
         for (uint8 i=0; i<NUMBER_OF_LEVELS;) {
-            levels[i] = [uint256(s_level[i].lockingPeriod), uint256(s_level[i].boostP)];
+            levels[i] = [uint256(s_levels[i].lockingPeriod), uint256(s_levels[i].boostP)];
             unchecked { i++; }
         }
         return levels;
@@ -293,16 +295,16 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         }
 
         // Store rewards
-        s_epoch[currentEpochIndex].totalRewards = _epochRewards;
+        s_epoch[currentEpochIndex].totalRewards = uint128(_epochRewards);
         uint256 tempTotalTokensBoosted;
         for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
-            tempTotalTokensBoosted += (s_accStakedTokensPerEpochAndLevel[currentEpochIndex][i].accStakedTokens * s_level[i].boostP) / 1e10;
+            tempTotalTokensBoosted += (uint256(s_accStakedTokensPerEpochAndLevel[currentEpochIndex][i].accStakedTokens) * s_levels[i].boostP) / 1e10;
             // Add the accumulated epoch values to the next one
             s_accStakedTokensPerEpochAndLevel[currentEpochIndex + 1][i].accStakedTokens += s_accStakedTokensPerEpochAndLevel[currentEpochIndex][i].accStakedTokens;
             unchecked { i++; }
         }
         // Set totalTokensBoosted
-        s_epoch[currentEpochIndex].totalTokensBoosted = tempTotalTokensBoosted;
+        s_epoch[currentEpochIndex].totalTokensBoosted = uint128(tempTotalTokensBoosted);
         // Epoch timestamping
         uint40 startTimestamp;
         uint40 endTimestamp;
@@ -374,8 +376,8 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         // Level format [lockingPeriod, boostP]
         checkboostP(_levels);
         for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
-            s_level[i].lockingPeriod = _levels[i].lockingPeriod;
-            s_level[i].boostP = _levels[i].boostP;
+            s_levels[i].lockingPeriod = _levels[i].lockingPeriod;
+            s_levels[i].boostP = _levels[i].boostP;
             unchecked { i++; }
         }
         // Event

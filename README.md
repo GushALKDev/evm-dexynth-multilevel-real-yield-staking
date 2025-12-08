@@ -12,14 +12,15 @@
 - **Code Style & Safety**: Adopted Chainlink-style naming conventions (`s_` for storage, `i_` for immutables) to prevent storage vs. memory confusion and locked compiler version to `0.8.28` for deterministic builds.
 
 #### 📊 Gas Performance Improvements
-A comparative analysis between the original implementation and the optimized version demonstrates significant gas savings across key operations:
+A comparative analysis between the original implementation and the final optimized version (v2) demonstrates massive gas savings across key operations:
 
-| Operation | Original Gas | Optimized Gas | Savings | Improvement |
+| Operation | Original Gas | Optimized Gas (v2) | Savings | Improvement |
 | :--- | :--- | :--- | :--- | :--- |
-| **Stake** | 260,117 | 201,894 | **-58,223** | **~22.3%** 📉 |
-| **Unstake** | 3,259,956 | 2,798,345 | **-461,611** | **~14.1%** 📉 |
+| **Stake** | 260,117 | 179,145 | **-80,972** | **~31.1%** 📉 |
+| **Unstake** | 3,259,956 | 1,718,095 | **-1,541,861** | **~47.3%** 📉 |
 | **Harvest** | 524,517 | 443,884 | **-80,633** | **~15.3%** 📉 |
-| **Add Reward** | 79,176 | 71,911 | **-7,265** | **~9.1%** 📉 |
+
+> *Note: `Unstake` and `Harvest` costs vary heavily depending on the number of epochs to process. The optimized version handles multi-epoch calculations significantly more efficiently.*
 
 ### 🧪 Advanced Testing Strategy
 - **Fuzzing Tests**: Implemented property-based testing using Foundry's Fuzzing capabilities (`testFuzz_Stake`, `testFuzz_Unstake`, `testFuzz_Harvest`). This allows testing the contract against thousands of random input combinations to ensure robustness and edge-case handling.
