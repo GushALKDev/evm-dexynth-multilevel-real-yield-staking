@@ -16,9 +16,9 @@ A comparative analysis between the original implementation and the final optimiz
 
 | Operation | Original Gas | Optimized Gas (v2) | Savings | Improvement |
 | :--- | :--- | :--- | :--- | :--- |
-| **Stake** | 260,117 | 179,145 | **-80,972** | **~31.1%** 📉 |
-| **Unstake** | 3,259,956 | 1,718,095 | **-1,541,861** | **~47.3%** 📉 |
-| **Harvest** | 524,517 | 443,884 | **-80,633** | **~15.3%** 📉 |
+| **Stake** | 260,117 | 177,177 | **-82,940** | **~31.9%** 📉 |
+| **Unstake** | 3,259,956 | 1,471,062 | **-1,788,894** | **~54.9%** 📉 |
+| **Harvest** | 524,517 | 308,142 | **-216,375** | **~41.3%** 📉 |
 
 > *Note: `Unstake` and `Harvest` costs vary heavily depending on the number of epochs to process. The optimized version handles multi-epoch calculations significantly more efficiently.*
 

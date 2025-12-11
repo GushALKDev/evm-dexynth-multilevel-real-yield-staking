@@ -123,7 +123,7 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         s_epoch[0].endTimestamp = uint40(block.timestamp);
         i_genesisEpochTimestamp = uint40(block.timestamp - s_epochDuration);
         // Setting levels data
-        checkboostP(_levels);
+        _checkboostP(_levels);
         for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
             s_levels[i].lockingPeriod = _levels[i].lockingPeriod;
             s_levels[i].boostP = _levels[i].boostP;
@@ -141,7 +141,7 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         _;
     }
 
-    function stake(uint256 _amount, uint8 _level /* starting from 0 */) external {
+    function stake(uint256 _amount, uint8 _level /* starting from 0 */) external nonReentrant {
         if (_amount == 0) revert WrongParams();
         if (_level >= NUMBER_OF_LEVELS) revert WrongParams();
         // Check for closing epochs first
@@ -164,13 +164,12 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         // Update User values
         s_user[msg.sender].totalStakedDEXYs += uint128(_amount); // Total staked tokens
         s_stakedTokensPerWalletAndEpochAndLevel[msg.sender][startingEpoch][_level].stakedDEXYs += uint128(_amount); // Staked tokens by level
-        // accStakedTokensPerWalletAndLevel[msg.sender][_level].accStakedTokens += _amount;
-        s_user[msg.sender].stakeIndex = userStakeIndex + 1;
+        s_user[msg.sender].stakeIndex++;
         // Event
         emit DEXYsStaked(msg.sender, _amount);
     }
 
-    function unstake(uint64 _stakeIndex) external {
+    function unstake(uint64 _stakeIndex) external nonReentrant {
         // One unstake per stake
         if (s_stakeInfo[msg.sender][_stakeIndex].unstacked) revert AlreadyUnstaked();
         // Stake status
@@ -178,35 +177,56 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         // Checking for closing epochs
         checkForClosingEpochs();
         // stakeInfo data
-        uint256 _amount = s_stakeInfo[msg.sender][_stakeIndex].stakedDEXYs;
-        uint8 _level = s_stakeInfo[msg.sender][_stakeIndex].level;
-        uint32 _epoch = s_stakeInfo[msg.sender][_stakeIndex].startingEpoch;
+        uint256 amount = s_stakeInfo[msg.sender][_stakeIndex].stakedDEXYs;
+        uint8 level = s_stakeInfo[msg.sender][_stakeIndex].level;
+        uint32 epoch = s_stakeInfo[msg.sender][_stakeIndex].startingEpoch;
+        
         // Try to harvesting tokens first
-        if (isHarvestable()) {
-            // Harvest rewards
-            harvest();
-            // Remove unstaked tokens from just consolidated accumulation.
-            s_accStakedTokensPerWalletAndLevel[msg.sender][_level].accStakedTokens -= uint128(_amount);
+        _harvest();
+        
+        // Remove unstaked tokens from just consolidated accumulation.
+        // This MUST be done outside the harvest block to ensure correctness even if harvest is skipped.
+        if (epoch <= s_user[msg.sender].lastEpochHarvested) {
+            s_accStakedTokensPerWalletAndLevel[msg.sender][level].accStakedTokens -= uint128(amount);
         }
-        s_user[msg.sender].totalStakedDEXYs -= uint128(_amount);
+
+        s_user[msg.sender].totalStakedDEXYs -= uint128(amount);
         // Remove unstaked tokens from mappings
-        s_stakedTokensPerWalletAndEpochAndLevel[msg.sender][_epoch][_level].stakedDEXYs -= uint128(_amount);
-        s_accStakedTokensPerEpochAndLevel[getCurrentEpochIndex()][_level].accStakedTokens -= uint128(_amount);       
+        s_stakedTokensPerWalletAndEpochAndLevel[msg.sender][epoch][level].stakedDEXYs -= uint128(amount);
+        s_accStakedTokensPerEpochAndLevel[getCurrentEpochIndex()][level].accStakedTokens -= uint128(amount);       
         // Mark stake as unstaked
         s_stakeInfo[msg.sender][_stakeIndex].unstacked = true;
         // Transfer DEXYs back to the user
-        IERC20(DEXY).safeTransfer(msg.sender, _amount);
+        IERC20(DEXY).safeTransfer(msg.sender, amount);
         // Event
-        emit DEXYsUnstaked(msg.sender, _amount);
+        emit DEXYsUnstaked(msg.sender, amount);
     }
-
-    function harvest() public {
+    
+    function harvest() external nonReentrant() {
         // Check for closing epochs first
         checkForClosingEpochs();
         uint32 currentEpochIndex = getCurrentEpochIndex();
         uint32 lastEpochHarvested = s_user[msg.sender].lastEpochHarvested;
+        
+        // Revert checks for public function
         if ((currentEpochIndex - (lastEpochHarvested + 1)) == 0) revert NoEpochsToHarvest();
         if (s_user[msg.sender].totalStakedDEXYs == 0) revert NoStakedTokens();
+        
+        uint256 totalUserRewards = _harvest();
+        
+        if (totalUserRewards == 0) revert NoRewardsToHarvest();
+    }
+
+    function _harvest() internal returns (uint256) {
+        uint32 currentEpochIndex = getCurrentEpochIndex();
+        uint32 lastEpochHarvested = s_user[msg.sender].lastEpochHarvested;
+        
+        // If nothing to harvest, return 0
+        if ((currentEpochIndex - (lastEpochHarvested + 1)) == 0) return 0;
+        if (s_user[msg.sender].totalStakedDEXYs == 0) return 0;
+        // If no rewards in the pool, we can skip the calculation loop to save gas
+        if (s_accRewards == 0) return 0;
+        
         uint256 totalUserRewards;
         // Harvesting from last epoch harvested to the last closed one
         for (uint8 j = 0; j < NUMBER_OF_LEVELS;) {
@@ -232,14 +252,18 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         }
         s_user[msg.sender].lastEpochHarvested = uint32(currentEpochIndex - 1);
         s_user[msg.sender].totalHarvestedRewards += uint128(totalUserRewards);
-        if (totalUserRewards == 0) revert NoRewardsToHarvest();
-        // Transfer USDT rewards to the user
-        IERC20(USDT).safeTransfer(msg.sender, totalUserRewards);
-        // Event
-        emit RewardsHarvested(msg.sender, totalUserRewards);
+        
+        if (totalUserRewards > 0) {
+            // Transfer USDT rewards to the user
+            IERC20(USDT).safeTransfer(msg.sender, totalUserRewards);
+            // Event
+            emit RewardsHarvested(msg.sender, totalUserRewards);
+        }
+        
+        return totalUserRewards;
     }
 
-    function addStakingReward(uint256 _amount) external {
+    function addStakingReward(uint256 _amount) external nonReentrant() {
         IERC20(USDT).safeTransferFrom(msg.sender, address(this), _amount);
         s_accRewards += _amount;
     }
@@ -259,7 +283,7 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
                 epochsReadyForClosing = targetEpochIndex - nextEpochIndex;
             }
             // Calculating rewards for every second
-            (uint40 fromTimestamp,) = getEpochTimestamps(nextEpochIndex);
+            (uint40 fromTimestamp,) = _getEpochTimestamps(nextEpochIndex);
             uint256 secondsFromLastClosedEpoch;
             unchecked {
                 secondsFromLastClosedEpoch = (block.timestamp - fromTimestamp);
@@ -267,14 +291,14 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
             uint256 rewardsPerSecond = s_accRewards / secondsFromLastClosedEpoch;
             uint256 rewardsPerEpoch = rewardsPerSecond * s_epochDuration;
             for (uint32 i=0; i<epochsReadyForClosing;) {
-                closeCurrentEpoch(rewardsPerEpoch);
+                _closeCurrentEpoch(rewardsPerEpoch);
                 unchecked { i++; }
             }
         }
     }
 
     function getCurrentEpochIndex() public view returns(uint32) {
-        return getEpochIndexByTimestamp(block.timestamp);
+        return _getEpochIndexByTimestamp(block.timestamp);
     }
 
     function getLevels() external view returns(uint256[2][5] memory) {
@@ -286,7 +310,7 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         return levels;
     }
 
-    function closeCurrentEpoch(uint256 _epochRewards) internal {
+    function _closeCurrentEpoch(uint256 _epochRewards) internal {
         // Closing current epoch...
         uint32 lastClosedEpochIndex = s_lastClosedEpochIndex;
         uint32 currentEpochIndex;
@@ -309,7 +333,7 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         uint40 startTimestamp;
         uint40 endTimestamp;
         unchecked {
-            startTimestamp = uint40(s_epoch[lastClosedEpochIndex].endTimestamp + 1);
+            startTimestamp = uint40(s_epoch[lastClosedEpochIndex].endTimestamp);
             endTimestamp = uint40(startTimestamp + s_epochDuration);
         }
         s_epoch[currentEpochIndex].startTimestamp = startTimestamp;
@@ -322,27 +346,20 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         s_lastClosedEpochIndex = currentEpochIndex;
     }
 
-    function getEpochTimestamps(uint32 _epochIndex) internal view returns(uint40, uint40) {
-        uint40 startTimestamp = uint40(i_genesisEpochTimestamp + ((s_epochDuration + 1) * _epochIndex));
+    function _getEpochTimestamps(uint32 _epochIndex) internal view returns(uint40, uint40) {
+        uint40 startTimestamp = uint40(i_genesisEpochTimestamp + ((s_epochDuration) * _epochIndex));
         uint40 endTimeStamp = uint40(startTimestamp + s_epochDuration);
         return (startTimestamp, endTimeStamp);
     }
 
-    function getEpochIndexByTimestamp(uint256 _timestamp) internal view returns(uint32 _epochIndex) {
+    function _getEpochIndexByTimestamp(uint256 _timestamp) internal view returns(uint32 _epochIndex) {
         if (_timestamp < i_genesisEpochTimestamp) revert TimestampLowerThanEpoch0Starts();
-        _epochIndex = uint32((_timestamp - i_genesisEpochTimestamp) / (s_epochDuration + 1));
+        _epochIndex = uint32((_timestamp - i_genesisEpochTimestamp) / (s_epochDuration));
         return _epochIndex;
     }
 
-    function isHarvestable() internal view returns (bool) {
-        if ((((getCurrentEpochIndex()) - (s_user[msg.sender].lastEpochHarvested + 1)) > 0) && (s_user[msg.sender].totalStakedDEXYs > 0) && (s_accRewards > 0)) {
-            return true;
-        }
-        return false;
-    }
-
     // Manage parameters
-    function checkboostP(Level[5] memory _levels) internal pure {
+    function _checkboostP(Level[5] memory _levels) internal pure {
         // Level format [lockingPeriod, boostP]
         bool failed;
         uint256 totalBoost;
@@ -355,7 +372,7 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         if (failed) revert WrongValues();
     }
 
-    function migrateContract(address _newContractAddress) external onlyGov {
+    function migrateContract(address _newContractAddress) external nonReentrant() onlyGov {
         uint256 USDTBalance = IERC20(USDT).balanceOf(address(this));
         uint256 DEXYBalance = IERC20(DEXY).balanceOf(address(this));
         IERC20(USDT).safeTransfer(_newContractAddress, USDTBalance);
@@ -374,7 +391,7 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
 
     function setLevels(Level[5] memory _levels) external onlyGov {
         // Level format [lockingPeriod, boostP]
-        checkboostP(_levels);
+        _checkboostP(_levels);
         for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
             s_levels[i].lockingPeriod = _levels[i].lockingPeriod;
             s_levels[i].boostP = _levels[i].boostP;
