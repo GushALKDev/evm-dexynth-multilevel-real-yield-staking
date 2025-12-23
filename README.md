@@ -11,6 +11,11 @@
 - **Storage Caching**: Implemented local variable caching for storage reads (SLOAD) in critical loops (`harvest`, `stake`, `checkForClosingEpochs`), minimizing expensive storage access.
 - **Code Style & Safety**: Adopted Chainlink-style naming conventions (`s_` for storage, `i_` for immutables) to prevent storage vs. memory confusion and locked compiler version to `0.8.28` for deterministic builds.
 
+### 🔐 Security & Code Quality Improvements
+- **Timelock Migration**: Replaced instant `migrateContract()` with a 30-day timelock system (`requestMigration` → `executeMigration`). This gives users time to withdraw funds if they disagree with a migration, eliminating rug-pull risk.
+- **Naming Convention**: Standardized storage variable names from `s_camelCase` to `sCamelCase` for cleaner code.
+- **Access Control**: Replaced custom `onlyGov` modifier with OpenZeppelin's `onlyOwner` from `Ownable.sol` for battle-tested access control.
+
 #### 📊 Gas Performance Improvements
 A comparative analysis between the original implementation and the final optimized version (v2) demonstrates massive gas savings across key operations:
 
