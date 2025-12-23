@@ -16,8 +16,6 @@ contract DexynthStakingTest is Test {
     address public user2;
     address public user3;
 
-    DexynthStakingV1.Level[5] public levels;
-
     function setUp() public {
         // Set timestamp first to avoid underflow in constructor
         vm.warp(2000000000);
@@ -31,8 +29,8 @@ contract DexynthStakingTest is Test {
         dexy = new DEXYToken();
         usdt = new USDTToken();
 
-        // Setup Levels
-        // Note: Struct order is (lockingPeriod, boostP)
+        // Setup Levels (dynamic array)
+        DexynthStakingV1.Level[] memory levels = new DexynthStakingV1.Level[](5);
         levels[0] = DexynthStakingV1.Level(2592000, 6500000000);
         levels[1] = DexynthStakingV1.Level(7776000, 8500000000);
         levels[2] = DexynthStakingV1.Level(15552000, 10000000000);
@@ -77,32 +75,16 @@ contract DexynthStakingTest is Test {
         assertEq(usdt.owner(), owner);
     }
 
-    function testLevelsConfiguration() public {
-        // Should revert setting new levels by non gov address
-        vm.prank(user3);
-        vm.expectRevert("Ownable: caller is not the owner");
-        staking.setLevels(levels);
-
-        // Should work if there are 5 levels and the requester is the owner
-        staking.setLevels(levels);
-    }
-
-    function testSetLevelsFailValidation() public {
-        DexynthStakingV1.Level[5] memory badLevels = levels;
-        // Change boostP so sum is wrong
-        badLevels[0].boostP = 1; 
+    function testLevelsAreImmutable() public view {
+        // Verify levels were set correctly in constructor
+        assertEq(staking.getNumberOfLevels(), 5);
         
-        vm.expectRevert(DexynthStakingV1.BoostSumNotRight.selector);
-        staking.setLevels(badLevels);
-    }
-
-    function testSetLevelsFailOrdering() public {
-        DexynthStakingV1.Level[5] memory badLevels = levels;
-        // Make level 1 locking period smaller than level 0
-        badLevels[1].lockingPeriod = badLevels[0].lockingPeriod - 1;
-        
-        vm.expectRevert(DexynthStakingV1.WrongValues.selector);
-        staking.setLevels(badLevels);
+        // getLevels now returns Level[] directly
+        DexynthStakingV1.Level[] memory levels = staking.getLevels();
+        assertEq(levels[0].lockingPeriod, 2592000);
+        assertEq(levels[0].boostP, 6500000000);
+        assertEq(levels[4].lockingPeriod, 62208000);
+        assertEq(levels[4].boostP, 13500000000);
     }
 
     function testMigrationWithTimelock() public {
@@ -184,12 +166,12 @@ contract DexynthStakingTest is Test {
     }
 
     function testGetLevels() public view {
-        uint256[2][5] memory levelsData = staking.getLevels();
-        // Check a few values
-        assertEq(levelsData[0][0], levels[0].lockingPeriod);
-        assertEq(levelsData[0][1], levels[0].boostP);
-        assertEq(levelsData[4][0], levels[4].lockingPeriod);
-        assertEq(levelsData[4][1], levels[4].boostP);
+        DexynthStakingV1.Level[] memory levelsData = staking.getLevels();
+        // Check a few values - using hardcoded expected values since levels are set in constructor
+        assertEq(levelsData[0].lockingPeriod, 2592000);
+        assertEq(levelsData[0].boostP, 6500000000);
+        assertEq(levelsData[4].lockingPeriod, 62208000);
+        assertEq(levelsData[4].boostP, 13500000000);
     }
 
     // --- Epochs Tests ---

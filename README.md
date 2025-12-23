@@ -13,6 +13,7 @@
 
 ### 🔐 Security & Code Quality Improvements
 - **Timelock Migration**: Replaced instant `migrateContract()` with a 30-day timelock system (`requestMigration` → `executeMigration`). This gives users time to withdraw funds if they disagree with a migration, eliminating rug-pull risk.
+- **Dynamic Immutable Levels**: Refactored from fixed 5-level array (`Level[5]`) to dynamic array (`Level[]`) set at deployment and immutable thereafter. Deploy with any number of staking tiers while guaranteeing users the rules won't change.
 - **Naming Convention**: Standardized storage variable names from `s_camelCase` to `sCamelCase` for cleaner code.
 - **Access Control**: Replaced custom `onlyGov` modifier with OpenZeppelin's `onlyOwner` from `Ownable.sol` for battle-tested access control.
 

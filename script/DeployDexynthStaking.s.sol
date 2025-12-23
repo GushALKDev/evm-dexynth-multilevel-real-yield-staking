@@ -12,7 +12,7 @@ contract DeployDexynthStaking is Script {
         
         vm.startBroadcast(deployerPrivateKey);
 
-        DexynthStakingV1.Level[5] memory levels;
+        DexynthStakingV1.Level[] memory levels = new DexynthStakingV1.Level[](5);
         // [[2592000, 6500000000], [7776000, 8500000000], [15552000, 10000000000], [31536000, 11500000000], [62208000, 13500000000]]
         levels[0] = DexynthStakingV1.Level(2592000, 6500000000);
         levels[1] = DexynthStakingV1.Level(7776000, 8500000000);

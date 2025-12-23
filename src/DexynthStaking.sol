@@ -15,7 +15,6 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
     address public immutable USDT;                      // $USDT
 
     // Constants addresses
-    uint8 public constant NUMBER_OF_LEVELS = 5;
     uint32 public constant MIGRATION_DELAY = 30 days;
 
     // SLOT 0
@@ -28,7 +27,7 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
     uint256 public sAccRewards;                        // 32bytes (Accumulated Rewards in USDT)
 
     // Levels
-    Level[5] public sLevels;
+    Level[] public sLevels;
 
     // Mappings
     mapping(address => User) public sUser;
@@ -80,7 +79,6 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
     error MinimumOneDay();
     error BoostSumNotRight();
     error WrongValues();
-    error GovOnly();
     error AlreadyUnstaked();
     error StakeStillLocked();
     error NoEpochsToHarvest();
@@ -91,11 +89,9 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
     error NoMigrationRequested();
     error TimelockStillActive();
     error MigrationAlreadyPending();
+    error NoLevels();
 
     // Events
-    event GovFundUpdated(address value);
-
-    event LevelsUpdated(Level[5] levels);
     
     event RewardsHarvested(address indexed user, uint256 amount);
     
@@ -116,7 +112,7 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
     constructor(
         address _dexy,
         address _usdt,
-        Level[5] memory _levels,            // [[lockingPeriod0, boostP0], [lockingPeriod1, boostP1], [lockingPeriod2, boostP2], [lockingPeriod3, boostP3], [lockingPeriod4, boostP4]]
+        Level[] memory _levels,            // [[lockingPeriod0, boostP0], [lockingPeriod1, boostP1], [lockingPeriod2, boostP2], [lockingPeriod3, boostP3], [lockingPeriod4, boostP4]]
                                             // [[2592000, 6500000000], [7776000, 8500000000], [15552000, 10000000000], [31536000, 11500000000], [62208000, 13500000000]]
         uint256 _epochDuration              // Seconds
     ) {
@@ -132,10 +128,10 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         sEpoch[0].endTimestamp = uint40(block.timestamp);
         i_genesisEpochTimestamp = uint40(block.timestamp - sEpochDuration);
         // Setting levels data
+        if (_levels.length == 0) revert NoLevels();
         _checkboostP(_levels);
-        for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
-            sLevels[i].lockingPeriod = _levels[i].lockingPeriod;
-            sLevels[i].boostP = _levels[i].boostP;
+        for (uint8 i = 0; i < _levels.length;) {
+            sLevels.push(_levels[i]);
             unchecked { i++; }
         }
         // Setting addresses
@@ -145,7 +141,7 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
 
     function stake(uint256 _amount, uint8 _level /* starting from 0 */) external nonReentrant {
         if (_amount == 0) revert WrongParams();
-        if (_level >= NUMBER_OF_LEVELS) revert WrongParams();
+        if (_level >= sLevels.length) revert WrongParams();
         // Check for closing epochs first
         checkForClosingEpochs();
         // Deposit DEXYs to the pool
@@ -231,7 +227,7 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         
         uint256 totalUserRewards;
         // Harvesting from last epoch harvested to the last closed one
-        for (uint8 j = 0; j < NUMBER_OF_LEVELS;) {
+        for (uint8 j = 0; j < sLevels.length;) {
             uint256 currentAccStakedTokens = sAccStakedTokensPerWalletAndLevel[msg.sender][j].accStakedTokens;
             uint64 boostP = sLevels[j].boostP;
             // Get the accumulated tokens from last epoch
@@ -303,13 +299,8 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         return _getEpochIndexByTimestamp(block.timestamp);
     }
 
-    function getLevels() external view returns(uint256[2][5] memory) {
-        uint256[2][5] memory levels;
-        for (uint8 i=0; i<NUMBER_OF_LEVELS;) {
-            levels[i] = [uint256(sLevels[i].lockingPeriod), uint256(sLevels[i].boostP)];
-            unchecked { i++; }
-        }
-        return levels;
+    function getLevels() external view returns(Level[] memory) {
+        return sLevels;
     }
 
     function _closeCurrentEpoch(uint256 _epochRewards) private {
@@ -323,7 +314,7 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         // Store rewards
         sEpoch[currentEpochIndex].totalRewards = uint128(_epochRewards);
         uint256 tempTotalTokensBoosted;
-        for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
+        for (uint8 i = 0; i < sLevels.length;) {
             tempTotalTokensBoosted += (uint256(sAccStakedTokensPerEpochAndLevel[currentEpochIndex][i].accStakedTokens) * sLevels[i].boostP) / 1e10;
             // Add the accumulated epoch values to the next one
             sAccStakedTokensPerEpochAndLevel[currentEpochIndex + 1][i].accStakedTokens += sAccStakedTokensPerEpochAndLevel[currentEpochIndex][i].accStakedTokens;
@@ -361,16 +352,17 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
     }
 
     // Manage parameters
-    function _checkboostP(Level[5] memory _levels) private pure {
+    function _checkboostP(Level[] memory _levels) private pure {
         // Level format [lockingPeriod, boostP]
         bool failed;
         uint256 totalBoost;
-        for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
-            if ((i < NUMBER_OF_LEVELS - 1) && (!((_levels[i].lockingPeriod < _levels[i + 1].lockingPeriod) && (_levels[i].boostP < _levels[i + 1].boostP)))) failed = true;
+        uint256 numLevels = _levels.length;
+        for (uint256 i = 0; i < numLevels;) {
+            if ((i < numLevels - 1) && (!((_levels[i].lockingPeriod < _levels[i + 1].lockingPeriod) && (_levels[i].boostP < _levels[i + 1].boostP)))) failed = true;
             totalBoost += _levels[i].boostP;
             unchecked { i++; }
         }
-        if (totalBoost != NUMBER_OF_LEVELS * 1e10) revert BoostSumNotRight();
+        if (totalBoost != numLevels * 1e10) revert BoostSumNotRight();
         if (failed) revert WrongValues();
     }
 
@@ -402,15 +394,9 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         emit DEXYMigrationSuccess(dexyBalance, migrationAddress);
     }
 
-    function setLevels(Level[5] memory _levels) external onlyOwner {
-        // Level format [lockingPeriod, boostP]
-        _checkboostP(_levels);
-        for (uint8 i = 0; i < NUMBER_OF_LEVELS;) {
-            sLevels[i].lockingPeriod = _levels[i].lockingPeriod;
-            sLevels[i].boostP = _levels[i].boostP;
-            unchecked { i++; }
-        }
-        // Event
-        emit LevelsUpdated(_levels);
-    }    
+    function getNumberOfLevels() external view returns (uint8) {
+        return uint8(sLevels.length);
+    }
+
+
 }
