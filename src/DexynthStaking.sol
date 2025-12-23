@@ -1,77 +1,98 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import "@openzeppelin/token/ERC20/IERC20.sol";
-import "@openzeppelin/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/access/Ownable.sol";
-import "@openzeppelin/security/ReentrancyGuard.sol";
+import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/token/ERC20/utils/SafeERC20.sol";
+import {SafeCast} from "@openzeppelin/utils/math/SafeCast.sol";
+import {Ownable} from "@openzeppelin/access/Ownable.sol";
+import {ReentrancyGuard} from "@openzeppelin/security/ReentrancyGuard.sol";
 
+/**
+ * @title Dexynth Staking V1
+ * @notice MasterChef-style staking contract for DEXY tokens.
+ * @dev Supports multiple lock periods with boosted rewards.
+ *      Uses O(1) reward distribution via accumulators.
+ */
 contract DexynthStakingV1 is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
+    using SafeCast for uint256;
 
     // Inmutable addresses
-    uint40 public immutable i_genesisEpochTimestamp;
+    uint40 public immutable I_GENESIS_EPOCH_TIMESTAMP;
     address public immutable DEXY;                      // $DEXY
-    address public immutable USDT;                      // $USDT
+    address public immutable REWARD_TOKEN;              // $REWARD_TOKEN
 
     // Constants addresses
     uint32 public constant MIGRATION_DELAY = 30 days;
 
-    // SLOT 0
-    uint32 public sEpochDuration;                      // 4bytes (Seconds)
-    uint32 public sLastClosedEpochIndex;               // 4bytes (Seconds)
-    uint32 public migrationRequestTime;                 // 4bytes (Seconds)
-    address public pendingMigrationAddress;             // 20 bytes (Pending migration address)
+    // SLOT 0: 18 bytes
+    uint32 public epochDuration;                       // 4 bytes
+    uint32 public migrationRequestTime;                // 4 bytes
+    uint40 public lastRewardTime;                      // 5 bytes
+    uint40 public rewardEndTime;                       // 5 bytes
 
-    // SLOT 1
-    uint256 public sAccRewards;                        // 32bytes (Accumulated Rewards in USDT)
+    // SLOT 1: 20 bytes
+    address public pendingMigrationAddress;            // 20 bytes
+
+    // SLOT 2: 32 bytes
+    uint256 public rewardRate;                         // 32 bytes
+
+    // SLOT 3: 32 bytes
+    uint256 public totalBoostedStake;                  // 32 bytes
 
     // Levels
-    Level[] public sLevels;
+    Level[] public levels;
 
     // Mappings
-    mapping(address => User) public sUser;
-    mapping(uint32 => Epoch) public sEpoch;
-    mapping(address => mapping(uint64 => Stake)) public sStakeInfo;                                                  // wallet => stakeIndex = Stake
-    mapping(address => mapping(uint32 => mapping(uint8 => Batch))) public sStakedTokensPerWalletAndEpochAndLevel;    // wallet => epoch => level = Batch
-    mapping(uint32 => mapping(uint8 => Accumulated)) public sAccStakedTokensPerEpochAndLevel;                        // epoch  => level = Accumulated
-    mapping(address => mapping(uint8 => Accumulated)) public sAccStakedTokensPerWalletAndLevel;                      // wallet => level = Accumulated
+    mapping(address => User) public users;
+    mapping(address => mapping(uint64 => Stake)) public stakeInfo;      // wallet => stakeIndex = Stake
+
+    // Per-level reward accumulator (MasterChef pattern)
+    mapping(uint8 => uint256) public accRewardPerShare;
 
     // Structs
+    /**
+     * @notice User account information
+     * @param stakeIndex Total number of stakes created by the user
+     * @param totalStakedDexy Total DEXY staked by the user across all levels
+     * @param totalHarvestedRewards Total rewards claimed by the user
+     */
     struct User {
-        uint128 totalStakedDEXYs;           // 16 bytes (1e18)
-        uint128 totalHarvestedRewards;      // 16 bytes (1e18)
-        uint64 stakeIndex;                  // 8 bytes
-        uint32 lastEpochHarvested;          // 4 bytes
+        uint64 stakeIndex;                              // 8 bytes
+        uint128 totalStakedDexy;                        // 16 bytes
+        uint128 totalHarvestedRewards;                  // 16 bytes
     }
 
+    /**
+     * @notice Information about a specific stake
+     * @param unstaked True if the stake has been withdrawn
+     * @param level The boost level index chosen for this stake
+     * @param timestamp Timestamp when the stake was created
+     * @param rewardStartTime Timestamp when rewards begin accruing (next epoch start)
+     * @param unlockTime Timestamp when tokens can be unstaked
+     * @param stakedDexy Amount of DEXY tokens staked
+     * @param rewardDebt Reward debt snapshot for MasterChef calculation
+     */
     struct Stake {
-        uint128 stakedDEXYs;                // 16 bytes (1e18)
-        uint40 timestamp;                   // 5 bytes
-        uint32 startingEpoch;               // 4 bytes
-        uint32 unlockingEpoch;              // 4 bytes
-        uint8 level;                        // 1 byte
-        bool unstacked;                     // 1 byte
+        bool unstaked;                                  // 1 byte
+        uint8 level;                                    // 1 byte
+        uint40 timestamp;                               // 5 bytes
+        uint40 rewardStartTime;                         // 5 bytes
+        uint40 unlockTime;                              // 5 bytes
+        uint128 stakedDexy;                             // 16 bytes
+        uint256 rewardDebt;                             // 32 bytes
     }
 
-    struct Accumulated {
-        uint128 accStakedTokens;            // 16 bytes (Accumulated staked tokens for the next epoch)
-    }
-
-    struct Batch {
-        uint128 stakedDEXYs;                // 16 bytes (1e18)
-    }
-
+    /**
+     * @notice Staking level configuration
+     * @param lockingPeriod Duration in seconds tokens must be locked
+     * @param boostP Reward multiplier (basis points, 1e10 precision)
+     * @param totalStaked Total DEXY staked in this level globally
+     */
     struct Level {
-        uint32 lockingPeriod;               // 4 bytes (Locking period in seconds)
-        uint64 boostP;                      // 8 bytes
-    }
-
-    struct Epoch {
-        uint128 totalRewards;               // 16 bytes (1e18)
-        uint128 totalTokensBoosted;         // 16 bytes (1e18)
-        uint40 startTimestamp;              // 5 bytes
-        uint40 endTimestamp;                // 5 bytes
+        uint32 lockingPeriod;                           // 4 bytes
+        uint64 boostP;                                  // 8 bytes
+        uint128 totalStaked;                            // 16 bytes
     }
     
     // Errors
@@ -81,277 +102,369 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
     error WrongValues();
     error AlreadyUnstaked();
     error StakeStillLocked();
-    error NoEpochsToHarvest();
-    error NoStakedTokens();
     error NoRewardsToHarvest();
-    error TimestampLowerThanEpoch0Starts();
+    error NoStakedTokens();
     error AddressZero();
     error NoMigrationRequested();
     error TimelockStillActive();
     error MigrationAlreadyPending();
     error NoLevels();
+    error ZeroDuration();
 
     // Events
     
+    /**
+     * @notice Emitted when a user harvests rewards
+     * @param user The address of the user
+     * @param amount The amount of REWARD_TOKEN harvested
+     */
     event RewardsHarvested(address indexed user, uint256 amount);
     
-    event DEXYsStaked(address indexed user, uint256 amount);
+    /**
+     * @notice Emitted when a user stakes DEXY
+     * @param user The address of the user
+     * @param amount The amount of DEXY staked
+     */
+    event DEXYStaked(address indexed user, uint256 amount);
     
-    event DEXYsUnstaked(address indexed user, uint256 amount);
+    /**
+     * @notice Emitted when a user unstakes DEXY
+     * @param user The address of the user
+     * @param amount The amount of DEXY unstaked
+     */
+    event DEXYUnstaked(address indexed user, uint256 amount);
     
-    event EpochClosed(uint32 epochIndex, uint256 rewards);
+    /**
+     * @notice Emitted when REWARD_TOKEN liquidity is migrated
+     * @param amount Amount of tokens transferred
+     * @param newContractAddress Destination address
+     */
+    event RewardTokenMigrationSuccess(uint256 amount, address newContractAddress);
     
-    event USDTMigrationSuccess(uint256 amount, address newContractAddress);
-    
+    /**
+     * @notice Emitted when DEXY liquidity is migrated
+     * @param amount Amount of tokens transferred
+     * @param newContractAddress Destination address
+     */
     event DEXYMigrationSuccess(uint256 amount, address newContractAddress);
     
+    /**
+     * @notice Emitted when migration is requested
+     * @param newContractAddress Proposed destination address
+     * @param executeAfter Timestamp when migration can be executed
+     */
     event MigrationRequested(address newContractAddress, uint40 executeAfter);
     
+    /// @notice Emitted when migration is cancelled
     event MigrationCancelled();
 
+    /**
+     * @notice Constructor
+     * @param _dexy Address of the DEXY token
+     * @param _rewardToken Address of the Reward Token
+     * @param _levels Array of Level configurations
+     * @param _epochDuration Duration of each epoch in seconds
+     */
     constructor(
         address _dexy,
-        address _usdt,
+        address _rewardToken,
         Level[] memory _levels,            // [[lockingPeriod0, boostP0], [lockingPeriod1, boostP1], [lockingPeriod2, boostP2], [lockingPeriod3, boostP3], [lockingPeriod4, boostP4]]
                                             // [[2592000, 6500000000], [7776000, 8500000000], [15552000, 10000000000], [31536000, 11500000000], [62208000, 13500000000]]
         uint256 _epochDuration              // Seconds
     ) {
         // Checking addresses
-        if (address(_dexy) == address(0) || address(_usdt) == address(0)) revert WrongParams();
+        if (address(_dexy) == address(0) || address(_rewardToken) == address(0)) revert WrongParams();
         // Checking minimum epoch duration
         if (_epochDuration < 86400) revert MinimumOneDay();
-        // Setting epochDuration
-        sEpochDuration = uint32(_epochDuration);
-        // Creating genesis epoch
-        sEpoch[0].totalRewards = 0;
-        sEpoch[0].startTimestamp = uint40(block.timestamp - sEpochDuration);
-        sEpoch[0].endTimestamp = uint40(block.timestamp);
-        i_genesisEpochTimestamp = uint40(block.timestamp - sEpochDuration);
-        // Setting levels data
         if (_levels.length == 0) revert NoLevels();
+        
+        // Setting epochDuration and genesis timestamp
+        epochDuration = _epochDuration.toUint32();
+        I_GENESIS_EPOCH_TIMESTAMP = uint40(block.timestamp);
+        lastRewardTime = uint40(block.timestamp);
+        
+        // Setting levels data
         _checkboostP(_levels);
         for (uint8 i = 0; i < _levels.length;) {
-            sLevels.push(_levels[i]);
+            levels.push(_levels[i]);
             unchecked { i++; }
         }
+        
         // Setting addresses
         DEXY = _dexy;
-        USDT = _usdt;
+        REWARD_TOKEN = _rewardToken;
     }
 
-    function stake(uint256 _amount, uint8 _level /* starting from 0 */) external nonReentrant {
+    /**
+     * @notice Stake DEXY tokens at a specified level
+     * @param _amount Amount of DEXY to stake
+     * @param _level Level index (0 to numLevels-1)
+     */
+    function stake(uint256 _amount, uint8 _level) external nonReentrant {
         if (_amount == 0) revert WrongParams();
-        if (_level >= sLevels.length) revert WrongParams();
-        // Check for closing epochs first
-        checkForClosingEpochs();
-        // Deposit DEXYs to the pool
+        if (_level >= levels.length) revert WrongParams();
+        
+        _updatePool();
+        
         IERC20(DEXY).safeTransferFrom(msg.sender, address(this), _amount);
         
-        uint64 userStakeIndex = sUser[msg.sender].stakeIndex;
-        uint32 currentEpochIndex = getCurrentEpochIndex();
-        uint32 startingEpoch = currentEpochIndex + 1;
+        uint64 userStakeIndex = users[msg.sender].stakeIndex;
+        uint40 nextEpochStart = _getNextEpochStart();
+        uint40 unlockTime = uint40(nextEpochStart + levels[_level].lockingPeriod);
 
-        // Create stakeInfo
-        sStakeInfo[msg.sender][userStakeIndex].timestamp = uint40(block.timestamp);
-        sStakeInfo[msg.sender][userStakeIndex].stakedDEXYs = uint128(_amount);
-        sStakeInfo[msg.sender][userStakeIndex].level = _level;
-        sStakeInfo[msg.sender][userStakeIndex].startingEpoch = startingEpoch;
-        sStakeInfo[msg.sender][userStakeIndex].unlockingEpoch = startingEpoch + (sLevels[_level].lockingPeriod / sEpochDuration);
-        // Accumulate tokens for next epoch
-        sAccStakedTokensPerEpochAndLevel[startingEpoch][_level].accStakedTokens += uint128(_amount);
-        // Update User values
-        sUser[msg.sender].totalStakedDEXYs += uint128(_amount); // Total staked tokens
-        sStakedTokensPerWalletAndEpochAndLevel[msg.sender][startingEpoch][_level].stakedDEXYs += uint128(_amount); // Staked tokens by level
-        sUser[msg.sender].stakeIndex++;
-        // Event
-        emit DEXYsStaked(msg.sender, _amount);
+        // Create stakeInfo with MasterChef rewardDebt
+        stakeInfo[msg.sender][userStakeIndex] = Stake({
+            stakedDexy: _amount.toUint128(),
+            timestamp: uint40(block.timestamp),
+            rewardStartTime: nextEpochStart,
+            unlockTime: unlockTime,
+            level: _level,
+            unstaked: false,
+            rewardDebt: (_amount * accRewardPerShare[_level]) / 1e18
+        });
+        
+        // Update level totals (MasterChef pattern)
+        levels[_level].totalStaked += _amount.toUint128();
+        totalBoostedStake += (_amount * levels[_level].boostP) / 1e10;
+        
+        // Update user
+        users[msg.sender].totalStakedDexy += _amount.toUint128();
+        users[msg.sender].stakeIndex++;
+        
+        emit DEXYStaked(msg.sender, _amount);
     }
 
+    /**
+     * @notice Unstake DEXY tokens and harvest rewards
+     * @param _stakeIndex Index of the stake to unstake
+     */
     function unstake(uint64 _stakeIndex) external nonReentrant {
-        // One unstake per stake
-        if (sStakeInfo[msg.sender][_stakeIndex].unstacked) revert AlreadyUnstaked();
-        // Stake status
-        if (getCurrentEpochIndex() < sStakeInfo[msg.sender][_stakeIndex].unlockingEpoch) revert StakeStillLocked();
-        // Checking for closing epochs
-        checkForClosingEpochs();
-        // stakeInfo data
-        uint256 amount = sStakeInfo[msg.sender][_stakeIndex].stakedDEXYs;
-        uint8 level = sStakeInfo[msg.sender][_stakeIndex].level;
-        uint32 epoch = sStakeInfo[msg.sender][_stakeIndex].startingEpoch;
+        Stake storage s = stakeInfo[msg.sender][_stakeIndex];
         
-        // Try to harvesting tokens first
-        _harvest();
+        if (s.unstaked) revert AlreadyUnstaked();
+        if (block.timestamp < s.unlockTime) revert StakeStillLocked();
         
-        // Remove unstaked tokens from just consolidated accumulation.
-        // This MUST be done outside the harvest block to ensure correctness even if harvest is skipped.
-        if (epoch <= sUser[msg.sender].lastEpochHarvested) {
-            sAccStakedTokensPerWalletAndLevel[msg.sender][level].accStakedTokens -= uint128(amount);
+        _updatePool();
+        
+        // Harvest rewards for this stake first
+        if (block.timestamp >= s.rewardStartTime) {
+            uint256 accReward = accRewardPerShare[s.level];
+            uint256 pending = (uint256(s.stakedDexy) * accReward / 1e18) - s.rewardDebt;
+            if (pending > 0) {
+                users[msg.sender].totalHarvestedRewards += pending.toUint128();
+                IERC20(REWARD_TOKEN).safeTransfer(msg.sender, pending);
+                emit RewardsHarvested(msg.sender, pending);
+            }
         }
-
-        sUser[msg.sender].totalStakedDEXYs -= uint128(amount);
-        // Remove unstaked tokens from mappings
-        sStakedTokensPerWalletAndEpochAndLevel[msg.sender][epoch][level].stakedDEXYs -= uint128(amount);
-        sAccStakedTokensPerEpochAndLevel[getCurrentEpochIndex()][level].accStakedTokens -= uint128(amount);       
+        
+        uint256 amount = s.stakedDexy;
+        uint8 level = s.level;
+        
+        // Update level totals (MasterChef pattern)
+        levels[level].totalStaked -= amount.toUint128();
+        totalBoostedStake -= (amount * levels[level].boostP) / 1e10;
+        
+        // Update user
+        users[msg.sender].totalStakedDexy -= amount.toUint128();
+        
         // Mark stake as unstaked
-        sStakeInfo[msg.sender][_stakeIndex].unstacked = true;
+        s.unstaked = true;
+        
         // Transfer DEXYs back to the user
         IERC20(DEXY).safeTransfer(msg.sender, amount);
-        // Event
-        emit DEXYsUnstaked(msg.sender, amount);
+        
+        emit DEXYUnstaked(msg.sender, amount);
     }
     
+    /**
+     * @notice Harvest all pending rewards for the caller
+     */
     function harvest() external nonReentrant() {
-        // Check for closing epochs first
-        checkForClosingEpochs();
-        uint32 currentEpochIndex = getCurrentEpochIndex();
-        uint32 lastEpochHarvested = sUser[msg.sender].lastEpochHarvested;
+        if (users[msg.sender].totalStakedDexy == 0) revert NoStakedTokens();
         
-        // Revert checks for public function
-        if ((currentEpochIndex - (lastEpochHarvested + 1)) == 0) revert NoEpochsToHarvest();
-        if (sUser[msg.sender].totalStakedDEXYs == 0) revert NoStakedTokens();
+        _updatePool();
         
-        uint256 totalUserRewards = _harvest();
+        uint256 totalUserRewards = _harvestAll(msg.sender);
         
         if (totalUserRewards == 0) revert NoRewardsToHarvest();
     }
 
-    function _harvest() internal returns (uint256) {
-        uint32 currentEpochIndex = getCurrentEpochIndex();
-        uint32 lastEpochHarvested = sUser[msg.sender].lastEpochHarvested;
-        
-        // If nothing to harvest, return 0
-        if ((currentEpochIndex - (lastEpochHarvested + 1)) == 0) return 0;
-        if (sUser[msg.sender].totalStakedDEXYs == 0) return 0;
-        // If no rewards in the pool, we can skip the calculation loop to save gas
-        if (sAccRewards == 0) return 0;
-        
-        uint256 totalUserRewards;
-        // Harvesting from last epoch harvested to the last closed one
-        for (uint8 j = 0; j < sLevels.length;) {
-            uint256 currentAccStakedTokens = sAccStakedTokensPerWalletAndLevel[msg.sender][j].accStakedTokens;
-            uint64 boostP = sLevels[j].boostP;
-            // Get the accumulated tokens from last epoch
-            for (uint32 i = lastEpochHarvested + 1; i <= currentEpochIndex - 1;) {
-                uint256 epochTotalRewards = sEpoch[i].totalRewards;
-                uint256 epochTotalBoostedStakedTokens = sEpoch[i].totalTokensBoosted;
-                uint256 payoutPerTokenAtThisLevel;
-                if (epochTotalBoostedStakedTokens * boostP > 0) {
-                    payoutPerTokenAtThisLevel = (((epochTotalRewards * 1e18) / epochTotalBoostedStakedTokens) * boostP) /  1e10;
+    /**
+     * @dev MasterChef O(1) harvest - loops through user's stakes, not epochs
+     * @param _user Address of the user to harvest for
+     * @return Total rewards harvested
+     */
+    function _harvestAll(address _user) internal returns (uint256) {
+        uint256 totalPending;
+        uint64 stakeCount = users[_user].stakeIndex;
+
+        for (uint64 i = 0; i < stakeCount;) {
+            Stake storage s = stakeInfo[_user][i];
+            
+            if (!s.unstaked && block.timestamp >= s.rewardStartTime) {
+                uint256 accReward = accRewardPerShare[s.level];
+                uint256 pending = (uint256(s.stakedDexy) * accReward / 1e18) - s.rewardDebt;
+                
+                if (pending > 0) {
+                    totalPending += pending;
+                    s.rewardDebt = (uint256(s.stakedDexy) * accReward) / 1e18;
                 }
-                else payoutPerTokenAtThisLevel = 0;
-                // Add the staked tokens after last harvest to the accumulated value
-                currentAccStakedTokens += sStakedTokensPerWalletAndEpochAndLevel[msg.sender][i][j].stakedDEXYs;
-                totalUserRewards += (payoutPerTokenAtThisLevel * currentAccStakedTokens) / 1e18;
-                unchecked { i++; }
             }
-            sAccStakedTokensPerWalletAndLevel[msg.sender][j].accStakedTokens = uint128(currentAccStakedTokens);
-            unchecked { j++; }
-            // Store the accumulated tokens after harvest.
-        }
-        sUser[msg.sender].lastEpochHarvested = uint32(currentEpochIndex - 1);
-        sUser[msg.sender].totalHarvestedRewards += uint128(totalUserRewards);
-        
-        if (totalUserRewards > 0) {
-            // Transfer USDT rewards to the user
-            IERC20(USDT).safeTransfer(msg.sender, totalUserRewards);
-            // Event
-            emit RewardsHarvested(msg.sender, totalUserRewards);
-        }
-        
-        return totalUserRewards;
-    }
-
-    function addStakingReward(uint256 _amount) external nonReentrant() {
-        IERC20(USDT).safeTransferFrom(msg.sender, address(this), _amount);
-        sAccRewards += _amount;
-    }
-
-    function checkForClosingEpochs() public {
-        uint32 targetEpochIndex = getCurrentEpochIndex();
-        uint32 lastClosedEpochIndex = sLastClosedEpochIndex;
-        uint32 nextEpochIndex;
-        unchecked {
-            nextEpochIndex = lastClosedEpochIndex + 1;
-        }
-
-        // If there are epochs ready for closing
-        if (targetEpochIndex > nextEpochIndex) {
-            uint32 epochsReadyForClosing;
-            unchecked {
-                epochsReadyForClosing = targetEpochIndex - nextEpochIndex;
-            }
-            // Calculating rewards for every second
-            (uint40 fromTimestamp,) = _getEpochTimestamps(nextEpochIndex);
-            uint256 secondsFromLastClosedEpoch;
-            unchecked {
-                secondsFromLastClosedEpoch = (block.timestamp - fromTimestamp);
-            }
-            uint256 rewardsPerSecond = sAccRewards / secondsFromLastClosedEpoch;
-            uint256 rewardsPerEpoch = rewardsPerSecond * sEpochDuration;
-            for (uint32 i=0; i<epochsReadyForClosing;) {
-                _closeCurrentEpoch(rewardsPerEpoch);
-                unchecked { i++; }
-            }
-        }
-    }
-
-    function getCurrentEpochIndex() public view returns(uint32) {
-        return _getEpochIndexByTimestamp(block.timestamp);
-    }
-
-    function getLevels() external view returns(Level[] memory) {
-        return sLevels;
-    }
-
-    function _closeCurrentEpoch(uint256 _epochRewards) private {
-        // Closing current epoch...
-        uint32 lastClosedEpochIndex = sLastClosedEpochIndex;
-        uint32 currentEpochIndex;
-        unchecked {
-            currentEpochIndex = lastClosedEpochIndex + 1;
-        }
-
-        // Store rewards
-        sEpoch[currentEpochIndex].totalRewards = uint128(_epochRewards);
-        uint256 tempTotalTokensBoosted;
-        for (uint8 i = 0; i < sLevels.length;) {
-            tempTotalTokensBoosted += (uint256(sAccStakedTokensPerEpochAndLevel[currentEpochIndex][i].accStakedTokens) * sLevels[i].boostP) / 1e10;
-            // Add the accumulated epoch values to the next one
-            sAccStakedTokensPerEpochAndLevel[currentEpochIndex + 1][i].accStakedTokens += sAccStakedTokensPerEpochAndLevel[currentEpochIndex][i].accStakedTokens;
             unchecked { i++; }
         }
-        // Set totalTokensBoosted
-        sEpoch[currentEpochIndex].totalTokensBoosted = uint128(tempTotalTokensBoosted);
-        // Epoch timestamping
-        uint40 startTimestamp;
-        uint40 endTimestamp;
-        unchecked {
-            startTimestamp = uint40(sEpoch[lastClosedEpochIndex].endTimestamp);
-            endTimestamp = uint40(startTimestamp + sEpochDuration);
+
+        if (totalPending > 0) {
+            users[_user].totalHarvestedRewards += totalPending.toUint128();
+            IERC20(REWARD_TOKEN).safeTransfer(_user, totalPending);
+            emit RewardsHarvested(_user, totalPending);
         }
-        sEpoch[currentEpochIndex].startTimestamp = startTimestamp;
-        sEpoch[currentEpochIndex].endTimestamp = endTimestamp;
-        // Event
-        emit EpochClosed(currentEpochIndex, _epochRewards);
-        // Substrate reward from accRewards
-        sAccRewards -= _epochRewards;
-        // Increment epoch number
-        sLastClosedEpochIndex = currentEpochIndex;
+
+        return totalPending;
     }
 
-    function _getEpochTimestamps(uint32 _epochIndex) private view returns(uint40, uint40) {
-        uint40 startTimestamp = uint40(i_genesisEpochTimestamp + ((sEpochDuration) * _epochIndex));
-        uint40 endTimeStamp = uint40(startTimestamp + sEpochDuration);
-        return (startTimestamp, endTimeStamp);
+    /**
+     * @notice Add staking rewards with specified duration
+     * @param _amount Amount of REWARD_TOKEN to add
+     * @param _duration Duration over which to distribute rewards
+     */
+    function addStakingReward(uint256 _amount, uint256 _duration) external nonReentrant() {
+        if (_duration == 0) revert ZeroDuration();
+        
+        _updatePool();
+        
+        IERC20(REWARD_TOKEN).safeTransferFrom(msg.sender, address(this), _amount);
+
+        // Calculate remaining rewards from current rate
+        uint256 remainingRewards = 0;
+        if (rewardEndTime > block.timestamp) {
+            remainingRewards = (rewardEndTime - block.timestamp) * rewardRate;
+        }
+
+        // New rate = (remaining + new) / new duration
+        rewardRate = (remainingRewards + _amount) / _duration;
+        rewardEndTime = (block.timestamp + _duration).toUint40();
     }
 
-    function _getEpochIndexByTimestamp(uint256 _timestamp) private view returns(uint32 _epochIndex) {
-        if (_timestamp < i_genesisEpochTimestamp) revert TimestampLowerThanEpoch0Starts();
-        _epochIndex = uint32((_timestamp - i_genesisEpochTimestamp) / (sEpochDuration));
-        return _epochIndex;
+    // ========== VIEW FUNCTIONS ==========
+
+    /**
+     * @notice Get the current epoch index
+     * @return Current epoch index based on genesis timestamp and epoch duration
+     */
+    function getCurrentEpochIndex() public view returns(uint32) {
+        if (block.timestamp < I_GENESIS_EPOCH_TIMESTAMP) return 0;
+        return uint32((block.timestamp - I_GENESIS_EPOCH_TIMESTAMP) / epochDuration);
+    }
+
+    /**
+     * @notice Get all staking levels configuration
+     * @return Array of Level structs
+     */
+    function getLevels() external view returns(Level[] memory) {
+        return levels;
+    }
+
+    /**
+     * @notice Get pending rewards for a user across all stakes
+     * @dev Simulates _updatePool inline for accurate current pending calculation
+     * @param _user Address of the user
+     * @return Total pending rewards
+     */
+    function pendingRewards(address _user) external view returns (uint256) {
+        // Simulate _updatePool to get current accRewardPerShare
+        uint256[] memory simAccRewardPerShare = new uint256[](levels.length);
+        for (uint8 i = 0; i < levels.length; i++) {
+            simAccRewardPerShare[i] = accRewardPerShare[i];
+        }
+        
+        if (totalBoostedStake > 0 && block.timestamp > lastRewardTime) {
+            uint256 endTime = rewardEndTime > 0 ? 
+                (block.timestamp < rewardEndTime ? block.timestamp : rewardEndTime) : 
+                block.timestamp;
+            
+            if (endTime > lastRewardTime) {
+                uint256 timeElapsed = endTime - lastRewardTime;
+                uint256 reward = timeElapsed * rewardRate;
+                
+                for (uint8 i = 0; i < levels.length; i++) {
+                    if (levels[i].totalStaked > 0) {
+                        uint256 levelBoostedStake = (uint256(levels[i].totalStaked) * levels[i].boostP) / 1e10;
+                        uint256 levelReward = (reward * levelBoostedStake) / totalBoostedStake;
+                        simAccRewardPerShare[i] += (levelReward * 1e18) / levels[i].totalStaked;
+                    }
+                }
+            }
+        }
+        
+        // Calculate pending with simulated accRewardPerShare
+        uint256 total;
+        uint64 stakeCount = users[_user].stakeIndex;
+        
+        for (uint64 i = 0; i < stakeCount;) {
+            Stake storage s = stakeInfo[_user][i];
+            if (!s.unstaked && block.timestamp >= s.rewardStartTime && s.stakedDexy > 0) {
+                uint256 accReward = simAccRewardPerShare[s.level];
+                total += (uint256(s.stakedDexy) * accReward / 1e18) - s.rewardDebt;
+            }
+            unchecked { i++; }
+        }
+        
+        return total;
+    }
+
+    // ========== INTERNAL FUNCTIONS ==========
+
+    /**
+     * @dev MasterChef: Updates global reward accumulators - O(levels)
+     */
+    function _updatePool() private {
+        if (block.timestamp <= lastRewardTime) return;
+        
+        if (totalBoostedStake == 0) {
+            lastRewardTime = uint40(block.timestamp);
+            return;
+        }
+
+        // Calculate time elapsed (capped at reward end time)
+        uint256 endTime = rewardEndTime > 0 ? 
+            (block.timestamp < rewardEndTime ? block.timestamp : rewardEndTime) : 
+            block.timestamp;
+        
+        if (endTime <= lastRewardTime) {
+            lastRewardTime = uint40(block.timestamp);
+            return;
+        }
+
+        uint256 timeElapsed = endTime - lastRewardTime;
+        uint256 reward = timeElapsed * rewardRate;
+
+        // Distribute to each level proportionally
+        for (uint8 i = 0; i < levels.length;) {
+            if (levels[i].totalStaked > 0) {
+                uint256 levelBoostedStake = (uint256(levels[i].totalStaked) * levels[i].boostP) / 1e10;
+                uint256 levelReward = (reward * levelBoostedStake) / totalBoostedStake;
+                accRewardPerShare[i] += (levelReward * 1e18) / levels[i].totalStaked;
+            }
+            unchecked { i++; }
+        }
+
+        lastRewardTime = uint40(block.timestamp);
+    }
+
+    /**
+     * @dev Returns the start timestamp of the next epoch
+     * @return Timestamp of the next epoch start
+     */
+    function _getNextEpochStart() private view returns (uint40) {
+        uint32 currentEpoch = getCurrentEpochIndex();
+        return uint40(I_GENESIS_EPOCH_TIMESTAMP + uint256(currentEpoch + 1) * epochDuration);
     }
 
     // Manage parameters
+    /**
+     * @dev Validates level boost configuration
+     * levels must be ordered by locking period and boostP
+     */
     function _checkboostP(Level[] memory _levels) private pure {
         // Level format [lockingPeriod, boostP]
         bool failed;
@@ -366,6 +479,10 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         if (failed) revert WrongValues();
     }
 
+    /**
+     * @notice Request migration of liquidity to a new contract
+     * @param _newContract Address of the new contract
+     */
     function requestMigration(address _newContract) external onlyOwner {
         if (migrationRequestTime != 0) revert MigrationAlreadyPending();
         pendingMigrationAddress = _newContract;
@@ -373,6 +490,9 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         emit MigrationRequested(_newContract, migrationRequestTime + MIGRATION_DELAY);
     }
 
+    /**
+     * @notice Cancel a pending migration request
+     */
     function cancelMigration() external onlyOwner {
         if (migrationRequestTime == 0) revert NoMigrationRequested();
         pendingMigrationAddress = address(0);
@@ -380,23 +500,28 @@ contract DexynthStakingV1 is Ownable, ReentrancyGuard {
         emit MigrationCancelled();
     }
 
+    /**
+     * @notice Execute migration after timelock expires
+     */
     function executeMigration() external onlyOwner {
         if (migrationRequestTime == 0) revert NoMigrationRequested();
         if (block.timestamp < migrationRequestTime + MIGRATION_DELAY) revert TimelockStillActive();
-        uint256 usdtBalance = IERC20(USDT).balanceOf(address(this));
+        uint256 usdtBalance = IERC20(REWARD_TOKEN).balanceOf(address(this));
         uint256 dexyBalance = IERC20(DEXY).balanceOf(address(this));
         address migrationAddress = pendingMigrationAddress;
-        IERC20(USDT).safeTransfer(migrationAddress, usdtBalance);
+        IERC20(REWARD_TOKEN).safeTransfer(migrationAddress, usdtBalance);
         IERC20(DEXY).safeTransfer(migrationAddress, dexyBalance);
         pendingMigrationAddress = address(0);
         migrationRequestTime = 0;
-        emit USDTMigrationSuccess(usdtBalance, migrationAddress);
+        emit RewardTokenMigrationSuccess(usdtBalance, migrationAddress);
         emit DEXYMigrationSuccess(dexyBalance, migrationAddress);
     }
 
+    /**
+     * @notice Get total number of levels
+     * @return Number of levels
+     */
     function getNumberOfLevels() external view returns (uint8) {
-        return uint8(sLevels.length);
+        return uint8(levels.length);
     }
-
-
 }

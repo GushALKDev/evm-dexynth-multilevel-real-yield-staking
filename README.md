@@ -1,32 +1,50 @@
 # Dexynth Multilevel Real Yield Staking
 
-## Project Updates (Dec 2025)
+## 🚀 Major Refactoring & Optimization (Dec 2025)
+
+The staking system has undergone a complete architectural overhaul to transition from an O(N) epoch-looping model to an **O(1) MasterChef-style** accumulator model. This ensures constant gas costs regardless of the number of epochs or stakes.
 
 ### ⚡️ Gas Optimizations & Refactoring
-- **Variable Packaging**: Optimized data types (e.g., `uint40` for timestamps, `uint32` for epochs) and reordered state variables/struct members to pack them into fewer storage slots, significantly reducing storage costs.
+- **O(1) MasterChef Rewards**: Replaced heavy loops with `accRewardPerShare` accumulators. Gas usage is now constant (< 200k) even after 10 years of staking.
+- **Variable Packaging**: Optimized data types (e.g., `uint40` for timestamps, `uint32` for epochs) and reordered state variables/struct members from smallest to largest to pack them into fewer storage slots.
 - **Custom Errors**: Replaced string revert messages with Custom Errors (e.g., `error StakeStillLocked()`) to save deployment and runtime gas.
 - **Explicit Types**: Standardized usage of `uint256` instead of implicit `uint` for clarity and consistency.
 - **Visibility Optimization**: Refactored public functions to `external` (`stake`, `unstake`, `harvest`, etc.) to reduce gas costs on function calls.
-- **Loop Optimization**: Implemented `unchecked` arithmetic in for-loops and epoch math to save gas on increment operations and timestamp calculations.
-- **Storage Caching**: Implemented local variable caching for storage reads (SLOAD) in critical loops (`harvest`, `stake`, `checkForClosingEpochs`), minimizing expensive storage access.
-- **Code Style & Safety**: Adopted Chainlink-style naming conventions (`s_` for storage, `i_` for immutables) to prevent storage vs. memory confusion and locked compiler version to `0.8.28` for deterministic builds.
+- **Loop Optimization**: Implemented `unchecked` arithmetic in for-loops and epoch math to save gas on increment operations.
+- **Generic Token Support**: Renamed `USDT` to `REWARD_TOKEN` to make the contract asset-agnostic.
+- **SafeCast**: Integrated OpenZeppelin's `SafeCast` for all type conversions to prevent silent overflows.
+- **NatSpec**: 100% documentation coverage.
 
 ### 🔐 Security & Code Quality Improvements
 - **Timelock Migration**: Replaced instant `migrateContract()` with a 30-day timelock system (`requestMigration` → `executeMigration`). This gives users time to withdraw funds if they disagree with a migration, eliminating rug-pull risk.
 - **Dynamic Immutable Levels**: Refactored from fixed 5-level array (`Level[5]`) to dynamic array (`Level[]`) set at deployment and immutable thereafter. Deploy with any number of staking tiers while guaranteeing users the rules won't change.
-- **Naming Convention**: Standardized storage variable names from `s_camelCase` to `sCamelCase` for cleaner code.
+- **Clean Naming**: Standardized all state variable names (removed partial Hungarian notation `s` prefixes). `Dexys` -> `Dexy` (singular).
 - **Access Control**: Replaced custom `onlyGov` modifier with OpenZeppelin's `onlyOwner` from `Ownable.sol` for battle-tested access control.
 
-#### 📊 Gas Performance Improvements
-A comparative analysis between the original implementation and the final optimized version (v2) demonstrates massive gas savings across key operations:
+### 🧹 Code Cleanup
+- Removed deprecated `lastEpochHarvested` field from `User` struct.
+- Removed deprecated `EpochClosed` event.
+- Removed unused legacy mappings (`sEpoch`, `sStakedTokensPerWallet...`).
+
+### 📊 Gas Performance (Optimized v2)
+Current gas consumption benchmarks from test suite:
 
 | Operation | Original Gas | Optimized Gas (v2) | Savings | Improvement |
 | :--- | :--- | :--- | :--- | :--- |
-| **Stake** | 260,117 | 177,177 | **-82,940** | **~31.9%** 📉 |
-| **Unstake** | 3,259,956 | 1,471,062 | **-1,788,894** | **~54.9%** 📉 |
-| **Harvest** | 524,517 | 308,142 | **-216,375** | **~41.3%** 📉 |
+| **Stake** | 260,117 | ~159,799 | **-100,318** | **~38.5%** 📉 |
+| **Unstake** | > 3M+ (linear) | ~95,642 (constant) | **-3M+** | **> 97%** 📉 |
+| **Harvest** | > 500k+ (linear) | ~166,370 (constant) | **-358k+** | **> 68%** 📉 |
 
-> *Note: `Unstake` and `Harvest` costs vary heavily depending on the number of epochs to process. The optimized version handles multi-epoch calculations significantly more efficiently.*
+> *Note: v1 costs grew indefinitely with time. v2 costs remain stable forever.*
+
+### 🛠️ Running Tests
+```bash
+# Run unit tests (39 tests including 5 fuzz tests)
+forge test
+
+# Generate gas report
+forge test --gas-report
+```
 
 ### 🧪 Advanced Testing Strategy
 - **Fuzzing Tests**: Implemented property-based testing using Foundry's Fuzzing capabilities (`testFuzz_Stake`, `testFuzz_Unstake`, `testFuzz_Harvest`). This allows testing the contract against thousands of random input combinations to ensure robustness and edge-case handling.
@@ -39,28 +57,7 @@ A comparative analysis between the original implementation and the final optimiz
 - **Improved Testing Infrastructure**:
   - Added `vm.warp` for precise time manipulation in tests.
   - Configured `via_ir = true` for better optimization.
-  - Set up Mock ERC20 tokens (`DEXY`, `USDT`) for isolated testing.
-
-## Running the Project
-
-### Prerequisites
-- [Foundry](https://book.getfoundry.sh/getting-started/installation)
-
-### Build
-```bash
-forge build
-```
-
-### Test
-Run the full test suite (Unit + Fuzzing):
-```bash
-forge test
-```
-
-Run with gas report:
-```bash
-forge test --gas-report
-```
+  - Set up Mock ERC20 tokens (`DEXY`, `RewardToken`) for isolated testing.
 
 ---
 
