@@ -191,7 +191,8 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
         // Setting levels data
         _checkboostP(_levels);
         for (uint256 i = 0; i < _levels.length;) {
-            levels.push(_levels[i]);
+            // totalStaked always starts at zero, whatever the caller passed
+            levels.push(Level({lockingPeriod: _levels[i].lockingPeriod, boostP: _levels[i].boostP, totalStaked: 0}));
             unchecked {
                 i++;
             }
