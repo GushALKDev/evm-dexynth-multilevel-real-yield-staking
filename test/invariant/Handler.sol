@@ -1,260 +1,278 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {DexynthStakingV2_2} from "../../src/DexynthStaking.sol";
-import {DEXYToken} from "../../src/DEXY.sol";
-import {RewardToken} from "../../src/RewardToken.sol";
-import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
+import {MockERC20} from "../mocks/MockERC20.sol";
 
 /**
- * @title Handler for DexynthStakingV2_2 Invariant Testing
- * @notice Provides bounded actions for stateful fuzz testing
- * @dev Tracks ghost variables to verify protocol invariants
+ * @title Handler for DexynthStakingV2_2 invariant testing
+ * @notice Bounded actions for stateful fuzzing. The suite runs with fail_on_revert = true: every revert the
+ *         contract should raise is asserted with vm.expectRevert, so any other revert fails the run. Calls that
+ *         cannot do anything in the current state are discarded with vm.assume and show up as discards in the
+ *         forge call table
  */
 contract Handler is Test {
     /*//////////////////////////////////////////////////////////////
-                               STATE
+                                 STATE
     //////////////////////////////////////////////////////////////*/
+
+    uint256 public constant NUM_ACTORS = 10;
+    address public constant MIGRATION_TARGET = address(0xDEAD);
+    address public constant NON_OWNER = address(0xBAD);
 
     DexynthStakingV2_2 public staking;
-    DEXYToken public dexy;
-    RewardToken public rewardToken;
+    MockERC20 public dexy;
+    MockERC20 public reward;
+    address public owner;
+    uint256 public rewardUnit;
 
-    // Ghost variables - shadow state for invariant verification
-    uint256 public ghost_totalStaked;
-    uint256 public ghost_totalRewardsAdded;
-    uint256 public ghost_totalRewardsHarvested;
-    mapping(uint8 => uint256) public ghost_levelStaked;
-    mapping(address => uint256) public ghost_userStaked;
-    mapping(address => uint256) public ghost_userHarvested;
-
-    // Actor management
     address[] public actors;
-    address internal currentActor;
-    mapping(address => bool) public isActor;
-    uint256 public constant NUM_ACTORS = 10;
 
-    // Call tracking for debugging
-    mapping(bytes4 => uint256) public callCount;
-    uint256 public totalCalls;
+    /**
+     * @notice Reward tokens transferred into the staking contract by the owner
+     */
+    uint256 public ghost_rewardsAdded;
+
+    /**
+     * @notice Number of calls per action that reached the contract, including calls asserted to revert
+     */
+    mapping(bytes32 => uint256) public effective;
 
     /*//////////////////////////////////////////////////////////////
-                             CONSTRUCTOR
+                              CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
-    constructor(DexynthStakingV2_2 _staking, DEXYToken _dexy, RewardToken _rewardToken) {
+    constructor(DexynthStakingV2_2 _staking, MockERC20 _dexy, MockERC20 _reward) {
         staking = _staking;
         dexy = _dexy;
-        rewardToken = _rewardToken;
-
-        // Pre-initialize actors for more realistic testing
+        reward = _reward;
+        owner = _staking.owner();
+        rewardUnit = 10 ** _reward.decimals();
         for (uint256 i = 0; i < NUM_ACTORS; i++) {
             address actor = address(uint160(0x1000 + i));
             actors.push(actor);
-            isActor[actor] = true;
-
-            // Approve staking contract
             vm.prank(actor);
             dexy.approve(address(staking), type(uint256).max);
         }
     }
 
     /*//////////////////////////////////////////////////////////////
-                              MODIFIERS
+                             USER ACTIONS
     //////////////////////////////////////////////////////////////*/
 
-    modifier useActor(uint256 actorIndexSeed) {
-        currentActor = actors[actorIndexSeed % NUM_ACTORS];
-        vm.startPrank(currentActor);
-        _;
-        vm.stopPrank();
+    /**
+     * @notice Stakes a small (2 to 1e6 wei) or a regular (1 to 100,000 DEXY) amount at any level
+     * @dev After a migration the call must revert with AlreadyMigrated
+     */
+    function stake(uint256 _actorSeed, uint256 _amount, uint256 _levelSeed, bool _small) external {
+        address actor = actors[_actorSeed % NUM_ACTORS];
+        uint8 level = uint8(_levelSeed % staking.getNumberOfLevels());
+        // 2 wei is the smallest amount with a non-zero boosted stake at the lowest multiplier
+        _amount = _small ? bound(_amount, 2, 1e6) : bound(_amount, 1 ether, 100_000 ether);
+        dexy.mint(actor, _amount);
+
+        if (staking.migrated()) {
+            vm.expectRevert(DexynthStakingV2_2.AlreadyMigrated.selector);
+            vm.prank(actor);
+            staking.stake(_amount, level);
+            effective["stakeAfterMigration"]++;
+            return;
+        }
+        vm.prank(actor);
+        staking.stake(_amount, level);
+        effective["stake"]++;
     }
 
-    modifier trackCall() {
-        callCount[msg.sig]++;
-        totalCalls++;
-        _;
+    /**
+     * @notice Withdraws one open stake of an actor that has one, warping to its unlockTime if it is still locked
+     * @dev The warp makes unstake execute instead of being skipped while the stake is locked
+     */
+    function unstake(uint256 _actorSeed, uint256 _indexSeed) external {
+        (address actor, uint64 index, bool found) = _findOpenStake(_actorSeed, _indexSeed);
+        vm.assume(found);
+        (,,, uint40 unlockTime,,) = staking.stakeInfo(actor, index);
+        if (!staking.migrated() && block.timestamp < unlockTime) vm.warp(unlockTime);
+
+        vm.prank(actor);
+        staking.unstake(index);
+        effective["unstake"]++;
+    }
+
+    /**
+     * @notice Harvests for the first actor, from the seed, with pending rewards. If stakers exist but none has
+     *         anything to claim, checks that harvest reverts with NoRewardsToHarvest
+     */
+    function harvest(uint256 _actorSeed) external {
+        address staker = address(0);
+        for (uint256 a = 0; a < NUM_ACTORS; a++) {
+            address actor = actors[(_actorSeed % NUM_ACTORS + a) % NUM_ACTORS];
+            (,, uint128 staked,,,) = staking.users(actor);
+            if (staked == 0) continue;
+            if (staking.pendingRewards(actor) > 0) {
+                vm.prank(actor);
+                staking.harvest();
+                effective["harvest"]++;
+                return;
+            }
+            if (staker == address(0)) staker = actor;
+        }
+        vm.assume(staker != address(0));
+
+        vm.expectRevert(DexynthStakingV2_2.NoRewardsToHarvest.selector);
+        vm.prank(staker);
+        staking.harvest();
+        effective["harvestNothing"]++;
     }
 
     /*//////////////////////////////////////////////////////////////
-                          HANDLER ACTIONS
+                             OWNER ACTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Stake DEXY tokens at a given level
-     * @param actorSeed Seed to select actor
-     * @param amount Amount to stake (will be bounded)
-     * @param levelIndex Level index (will be bounded to 0-4)
+     * @notice Owner funds a small (1 wei to 1000 tokens) or a regular (1 to 500,000 tokens) stream
+     * @dev After a migration the call must revert with AlreadyMigrated
      */
-    function stake(uint256 actorSeed, uint256 amount, uint8 levelIndex) public useActor(actorSeed) trackCall {
-        // Bound inputs
-        amount = bound(amount, 1 ether, 100_000 ether);
-        levelIndex = uint8(bound(levelIndex, 0, staking.getNumberOfLevels() - 1));
-
-        // Fund the actor
-        deal(address(dexy), currentActor, amount);
-
-        staking.stake(amount, levelIndex);
-
-        // Update ghost state
-        ghost_totalStaked += amount;
-        ghost_levelStaked[levelIndex] += amount;
-        ghost_userStaked[currentActor] += amount;
-    }
-
-    /**
-     * @notice Unstake DEXY tokens from a specific stake
-     * @param actorSeed Seed to select actor
-     * @param stakeIndexSeed Seed to select stake index
-     */
-    function unstake(uint256 actorSeed, uint256 stakeIndexSeed) public useActor(actorSeed) trackCall {
-        (uint64 userStakeCount,,,,,) = staking.users(currentActor);
-
-        // Skip if user has no stakes
-        if (userStakeCount == 0) return;
-
-        uint64 stakeIndex = uint64(stakeIndexSeed % userStakeCount);
-
-        // Get stake info
-        (bool unstaked, uint8 level,, uint40 unlockTime, uint128 stakedDexy,) =
-            staking.stakeInfo(currentActor, stakeIndex);
-
-        // Skip if already unstaked or still locked
-        if (unstaked) return;
-        if (block.timestamp < unlockTime) return;
-
-        // Get pending rewards before unstake (unstake also harvests)
-        uint256 rewardBalanceBefore = rewardToken.balanceOf(currentActor);
-
-        staking.unstake(stakeIndex);
-
-        uint256 rewardBalanceAfter = rewardToken.balanceOf(currentActor);
-        uint256 harvestedOnUnstake = rewardBalanceAfter - rewardBalanceBefore;
-
-        // Update ghost state
-        ghost_totalStaked -= stakedDexy;
-        ghost_levelStaked[level] -= stakedDexy;
-        ghost_userStaked[currentActor] -= stakedDexy;
-        ghost_totalRewardsHarvested += harvestedOnUnstake;
-        ghost_userHarvested[currentActor] += harvestedOnUnstake;
-    }
-
-    /**
-     * @notice Harvest pending rewards for an actor
-     * @param actorSeed Seed to select actor
-     */
-    function harvest(uint256 actorSeed) public useActor(actorSeed) trackCall {
-        (,, uint128 totalStakedDexy,,,) = staking.users(currentActor);
-
-        // Skip if user has nothing staked
-        if (totalStakedDexy == 0) return;
-
-        // Check if there are pending rewards
-        uint256 pending = staking.pendingRewards(currentActor);
-        if (pending == 0) return;
-
-        uint256 rewardBalanceBefore = rewardToken.balanceOf(currentActor);
-
-        staking.harvest();
-
-        uint256 rewardBalanceAfter = rewardToken.balanceOf(currentActor);
-        uint256 harvested = rewardBalanceAfter - rewardBalanceBefore;
-
-        // Update ghost state
-        ghost_totalRewardsHarvested += harvested;
-        ghost_userHarvested[currentActor] += harvested;
-    }
-
-    /**
-     * @notice Add staking rewards (owner action)
-     * @param amount Amount of rewards to add
-     * @param duration Duration over which to distribute
-     */
-    function addStakingReward(uint256 amount, uint256 duration) public trackCall {
-        amount = bound(amount, 1 ether, 500_000 ether);
-        duration = bound(duration, 1 days, 180 days);
-
-        address owner = staking.owner();
-
-        // Fund owner with reward tokens
-        deal(address(rewardToken), owner, amount);
+    function addStakingReward(uint256 _amount, uint256 _duration, bool _small) external {
+        _amount = _small ? bound(_amount, 1, 1000 * rewardUnit) : bound(_amount, rewardUnit, 500_000 * rewardUnit);
+        _duration = bound(_duration, 1 days, 180 days);
+        reward.mint(owner, _amount);
 
         vm.startPrank(owner);
-        rewardToken.approve(address(staking), amount);
-        staking.addStakingReward(amount, duration);
+        reward.approve(address(staking), _amount);
+        if (staking.migrated()) {
+            vm.expectRevert(DexynthStakingV2_2.AlreadyMigrated.selector);
+            staking.addStakingReward(_amount, _duration);
+            vm.stopPrank();
+            // The minted tokens stay with the owner, outside the conservation check
+            effective["addRewardAfterMigration"]++;
+            return;
+        }
+        staking.addStakingReward(_amount, _duration);
         vm.stopPrank();
-
-        // Update ghost state
-        ghost_totalRewardsAdded += amount;
+        ghost_rewardsAdded += _amount;
+        effective["addReward"]++;
     }
 
     /**
-     * @notice Advance time (critical for lock periods and rewards)
-     * @param secondsSeed Seed for time advancement
+     * @notice A non-owner tries to fund or reschedule the stream, which must revert
      */
-    function advanceTime(uint256 secondsSeed) public trackCall {
-        uint256 seconds_ = bound(secondsSeed, 1 hours, 90 days);
-        vm.warp(block.timestamp + seconds_);
+    function addStakingRewardNonOwner(uint256 _amount, uint256 _duration) external {
+        _amount = bound(_amount, 0, 1000 * rewardUnit);
+        _duration = bound(_duration, 1, 3650 days);
+        reward.mint(NON_OWNER, _amount);
+
+        vm.startPrank(NON_OWNER);
+        reward.approve(address(staking), _amount);
+        vm.expectRevert("Ownable: caller is not the owner");
+        staking.addStakingReward(_amount, _duration);
+        vm.stopPrank();
+        effective["addRewardNonOwner"]++;
     }
 
     /**
-     * @notice Advance time by exactly one epoch
+     * @notice Requests a migration. Must revert while another request is live or after a migration
+     * @dev Discarded 7 times out of 8 so that most runs spend most of their calls before a migration, where
+     *      stake, unstake and harvest have something to do
      */
-    function advanceOneEpoch() public trackCall {
-        uint32 epochDuration = staking.epochDuration();
-        vm.warp(block.timestamp + epochDuration);
+    function requestMigration(uint256 _seed) external {
+        vm.assume(_seed % 8 == 0);
+        uint256 requestTime = staking.migrationRequestTime();
+        bool isMigrated = staking.migrated();
+        uint256 end = _migrationEnd();
+        if (isMigrated) {
+            vm.expectRevert(DexynthStakingV2_2.AlreadyMigrated.selector);
+        } else if (requestTime != 0 && block.timestamp <= requestTime + end) {
+            vm.expectRevert(DexynthStakingV2_2.MigrationAlreadyPending.selector);
+        }
+        vm.prank(owner);
+        staking.requestMigration(MIGRATION_TARGET);
+        effective["requestMigration"]++;
+    }
+
+    /**
+     * @notice Cancels the pending request, or checks the revert when there is none
+     */
+    function cancelMigration() external {
+        if (staking.migrationRequestTime() == 0) vm.expectRevert(DexynthStakingV2_2.NoMigrationRequested.selector);
+        vm.prank(owner);
+        staking.cancelMigration();
+        effective["cancelMigration"]++;
+    }
+
+    /**
+     * @notice Executes a live request at a point of its window chosen by the seed, warping forward if needed
+     */
+    function executeMigration(uint256 _offsetSeed) external {
+        uint256 requestTime = staking.migrationRequestTime();
+        vm.assume(requestTime != 0 && block.timestamp <= requestTime + _migrationEnd());
+        uint256 earliest = requestTime + staking.MIGRATION_DELAY();
+        uint256 window = staking.MIGRATION_WINDOW();
+        if (block.timestamp < earliest) vm.warp(earliest + _offsetSeed % (window + 1));
+
+        vm.prank(owner);
+        staking.executeMigration();
+        effective["executeMigration"]++;
+    }
+
+    /**
+     * @notice Lets a live request expire and checks that it can no longer be executed
+     */
+    function expireMigration() external {
+        uint256 requestTime = staking.migrationRequestTime();
+        vm.assume(requestTime != 0);
+        uint256 expiry = requestTime + _migrationEnd() + 1;
+        if (block.timestamp < expiry) vm.warp(expiry);
+
+        vm.prank(owner);
+        vm.expectRevert(DexynthStakingV2_2.MigrationExpired.selector);
+        staking.executeMigration();
+        effective["expireMigration"]++;
     }
 
     /*//////////////////////////////////////////////////////////////
-                          VIEW FUNCTIONS
+                              TIME ACTIONS
     //////////////////////////////////////////////////////////////*/
 
-    /**
-     * @notice Get current actor count
-     */
-    function getActorCount() external view returns (uint256) {
-        return actors.length;
+    function advanceTime(uint256 _seconds) external {
+        vm.warp(block.timestamp + bound(_seconds, 1 hours, 30 days));
+        effective["advanceTime"]++;
+    }
+
+    function advanceOneEpoch() external {
+        vm.warp(block.timestamp + staking.epochDuration());
+        effective["advanceOneEpoch"]++;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                HELPERS
+    //////////////////////////////////////////////////////////////*/
+
+    function getActor(uint256 _index) external view returns (address) {
+        return actors[_index];
+    }
+
+    function _migrationEnd() internal view returns (uint256) {
+        return uint256(staking.MIGRATION_DELAY()) + staking.MIGRATION_WINDOW();
     }
 
     /**
-     * @notice Get actor by index
+     * @dev First actor, starting at the seed, with an open stake, and the first open stake starting at the index seed
      */
-    function getActor(uint256 index) external view returns (address) {
-        return actors[index % actors.length];
-    }
-
-    /**
-     * @notice Get ghost level staked for a specific level
-     */
-    function getGhostLevelStaked(uint8 level) external view returns (uint256) {
-        return ghost_levelStaked[level];
-    }
-
-    /**
-     * @notice Get ghost user staked amount
-     */
-    function getGhostUserStaked(address user) external view returns (uint256) {
-        return ghost_userStaked[user];
-    }
-
-    /**
-     * @notice Print call summary for debugging
-     */
-    function callSummary() external view {
-        console.log("\n=== Handler Call Summary ===");
-        console.log("Total calls:", totalCalls);
-        console.log("---");
-        console.log("stake():", callCount[this.stake.selector]);
-        console.log("unstake():", callCount[this.unstake.selector]);
-        console.log("harvest():", callCount[this.harvest.selector]);
-        console.log("addStakingReward():", callCount[this.addStakingReward.selector]);
-        console.log("advanceTime():", callCount[this.advanceTime.selector]);
-        console.log("advanceOneEpoch():", callCount[this.advanceOneEpoch.selector]);
-        console.log("---");
-        console.log("Ghost Total Staked:", ghost_totalStaked / 1e18, "DEXY");
-        console.log("Ghost Total Rewards Added:", ghost_totalRewardsAdded / 1e18);
-        console.log("Ghost Total Rewards Harvested:", ghost_totalRewardsHarvested / 1e18);
-        console.log("============================\n");
+    function _findOpenStake(uint256 _actorSeed, uint256 _indexSeed)
+        internal
+        view
+        returns (address actor, uint64 index, bool found)
+    {
+        for (uint256 a = 0; a < NUM_ACTORS; a++) {
+            actor = actors[(_actorSeed % NUM_ACTORS + a) % NUM_ACTORS];
+            (uint64 count,,,,,) = staking.users(actor);
+            for (uint64 i = 0; i < count; i++) {
+                index = uint64((_indexSeed % count + i) % count);
+                (bool unstaked,,,,,) = staking.stakeInfo(actor, index);
+                if (!unstaked) return (actor, index, true);
+            }
+        }
+        return (address(0), 0, false);
     }
 }
