@@ -115,6 +115,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
     error ZeroBoostedStake();
     error MigrationExpired();
     error AlreadyMigrated();
+    error StakeNotFound();
 
     // Events
 
@@ -242,6 +243,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
      * @param _stakeIndex Index of the stake to unstake
      */
     function unstake(uint64 _stakeIndex) external nonReentrant {
+        if (_stakeIndex >= users[msg.sender].stakeIndex) revert StakeNotFound();
         Stake storage s = stakeInfo[msg.sender][_stakeIndex];
 
         if (s.unstaked) revert AlreadyUnstaked();
