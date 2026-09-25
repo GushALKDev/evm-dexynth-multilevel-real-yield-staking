@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity 0.8.28;
 
 import {Script} from "forge-std/Script.sol";
 import {DexynthStakingV2_1} from "../src/DexynthStaking.sol";
@@ -8,7 +8,7 @@ contract DeployDexynthStaking is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address dexy = vm.envAddress("DEXY_ADDRESS");
-        address rewardToken = vm.envAddress("USDT_ADDRESS");
+        address rewardToken = vm.envAddress("REWARD_TOKEN_ADDRESS");
 
         vm.startBroadcast(deployerPrivateKey);
 
