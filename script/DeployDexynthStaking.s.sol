@@ -9,7 +9,7 @@ contract DeployDexynthStaking is Script {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address dexy = vm.envAddress("DEXY_ADDRESS");
         address rewardToken = vm.envAddress("USDT_ADDRESS");
-        
+
         vm.startBroadcast(deployerPrivateKey);
 
         DexynthStakingV2_1.Level[] memory levels = new DexynthStakingV2_1.Level[](5);

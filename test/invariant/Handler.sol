@@ -16,7 +16,7 @@ contract Handler is Test {
     /*//////////////////////////////////////////////////////////////
                                STATE
     //////////////////////////////////////////////////////////////*/
-    
+
     DexynthStakingV2_1 public staking;
     DEXYToken public dexy;
     RewardToken public rewardToken;
@@ -28,13 +28,13 @@ contract Handler is Test {
     mapping(uint8 => uint256) public ghost_levelStaked;
     mapping(address => uint256) public ghost_userStaked;
     mapping(address => uint256) public ghost_userHarvested;
-    
+
     // Actor management
     address[] public actors;
     address internal currentActor;
     mapping(address => bool) public isActor;
     uint256 public constant NUM_ACTORS = 10;
-    
+
     // Call tracking for debugging
     mapping(bytes4 => uint256) public callCount;
     uint256 public totalCalls;
@@ -42,18 +42,18 @@ contract Handler is Test {
     /*//////////////////////////////////////////////////////////////
                              CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
-    
+
     constructor(DexynthStakingV2_1 _staking, DEXYToken _dexy, RewardToken _rewardToken) {
         staking = _staking;
         dexy = _dexy;
         rewardToken = _rewardToken;
-        
+
         // Pre-initialize actors for more realistic testing
         for (uint256 i = 0; i < NUM_ACTORS; i++) {
             address actor = address(uint160(0x1000 + i));
             actors.push(actor);
             isActor[actor] = true;
-            
+
             // Approve staking contract
             vm.prank(actor);
             dexy.approve(address(staking), type(uint256).max);
@@ -63,14 +63,14 @@ contract Handler is Test {
     /*//////////////////////////////////////////////////////////////
                               MODIFIERS
     //////////////////////////////////////////////////////////////*/
-    
+
     modifier useActor(uint256 actorIndexSeed) {
         currentActor = actors[actorIndexSeed % NUM_ACTORS];
         vm.startPrank(currentActor);
         _;
         vm.stopPrank();
     }
-    
+
     modifier trackCall() {
         callCount[msg.sig]++;
         totalCalls++;
@@ -87,15 +87,11 @@ contract Handler is Test {
      * @param amount Amount to stake (will be bounded)
      * @param levelIndex Level index (will be bounded to 0-4)
      */
-    function stake(
-        uint256 actorSeed, 
-        uint256 amount, 
-        uint8 levelIndex
-    ) public useActor(actorSeed) trackCall {
+    function stake(uint256 actorSeed, uint256 amount, uint8 levelIndex) public useActor(actorSeed) trackCall {
         // Bound inputs
         amount = bound(amount, 1 ether, 100_000 ether);
         levelIndex = uint8(bound(levelIndex, 0, staking.getNumberOfLevels() - 1));
-        
+
         // Fund the actor
         deal(address(dexy), currentActor, amount);
 
@@ -112,26 +108,17 @@ contract Handler is Test {
      * @param actorSeed Seed to select actor
      * @param stakeIndexSeed Seed to select stake index
      */
-    function unstake(
-        uint256 actorSeed, 
-        uint256 stakeIndexSeed
-    ) public useActor(actorSeed) trackCall {
-        (uint64 userStakeCount, , ) = staking.users(currentActor);
-        
+    function unstake(uint256 actorSeed, uint256 stakeIndexSeed) public useActor(actorSeed) trackCall {
+        (uint64 userStakeCount,,) = staking.users(currentActor);
+
         // Skip if user has no stakes
         if (userStakeCount == 0) return;
 
         uint64 stakeIndex = uint64(stakeIndexSeed % userStakeCount);
-        
+
         // Get stake info
-        (
-            bool unstaked, 
-            uint8 level, 
-            , 
-            , 
-            uint40 unlockTime, 
-            uint128 stakedDexy, 
-        ) = staking.stakeInfo(currentActor, stakeIndex);
+        (bool unstaked, uint8 level,,, uint40 unlockTime, uint128 stakedDexy,) =
+            staking.stakeInfo(currentActor, stakeIndex);
 
         // Skip if already unstaked or still locked
         if (unstaked) return;
@@ -139,9 +126,9 @@ contract Handler is Test {
 
         // Get pending rewards before unstake (unstake also harvests)
         uint256 rewardBalanceBefore = rewardToken.balanceOf(currentActor);
-        
+
         staking.unstake(stakeIndex);
-        
+
         uint256 rewardBalanceAfter = rewardToken.balanceOf(currentActor);
         uint256 harvestedOnUnstake = rewardBalanceAfter - rewardBalanceBefore;
 
@@ -158,19 +145,19 @@ contract Handler is Test {
      * @param actorSeed Seed to select actor
      */
     function harvest(uint256 actorSeed) public useActor(actorSeed) trackCall {
-        (, uint128 totalStakedDexy, ) = staking.users(currentActor);
-        
+        (, uint128 totalStakedDexy,) = staking.users(currentActor);
+
         // Skip if user has nothing staked
         if (totalStakedDexy == 0) return;
-        
+
         // Check if there are pending rewards
         uint256 pending = staking.pendingRewards(currentActor);
         if (pending == 0) return;
-        
+
         uint256 rewardBalanceBefore = rewardToken.balanceOf(currentActor);
-        
+
         staking.harvest();
-        
+
         uint256 rewardBalanceAfter = rewardToken.balanceOf(currentActor);
         uint256 harvested = rewardBalanceAfter - rewardBalanceBefore;
 
@@ -184,18 +171,15 @@ contract Handler is Test {
      * @param amount Amount of rewards to add
      * @param duration Duration over which to distribute
      */
-    function addStakingReward(
-        uint256 amount, 
-        uint256 duration
-    ) public trackCall {
+    function addStakingReward(uint256 amount, uint256 duration) public trackCall {
         amount = bound(amount, 1 ether, 500_000 ether);
         duration = bound(duration, 1 days, 180 days);
 
         address owner = staking.owner();
-        
+
         // Fund owner with reward tokens
         deal(address(rewardToken), owner, amount);
-        
+
         vm.startPrank(owner);
         rewardToken.approve(address(staking), amount);
         staking.addStakingReward(amount, duration);
