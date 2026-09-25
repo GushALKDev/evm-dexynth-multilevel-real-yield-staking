@@ -21,26 +21,20 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
     uint40 public immutable I_GENESIS_EPOCH_TIMESTAMP;
     address public immutable DEXY; // $DEXY
     address public immutable REWARD_TOKEN; // $REWARD_TOKEN
+    uint32 public immutable epochDuration;
 
     // Constants addresses
     uint32 public constant MIGRATION_DELAY = 30 days;
     uint256 private constant ACC_PRECISION = 1e18;
     uint256 private constant BOOST_PRECISION = 1e10;
 
-    // SLOT 0: 18 bytes
-    uint32 public immutable epochDuration; // 4 bytes
-    uint32 public migrationRequestTime; // 4 bytes
-    uint40 public lastRewardTime; // 5 bytes
-    uint40 public rewardEndTime; // 5 bytes
-
-    // SLOT 1: 20 bytes
-    address public pendingMigrationAddress; // 20 bytes
-
-    // SLOT 2: 32 bytes
-    uint256 public rewardRate; // 32 bytes
-
-    // SLOT 3: 32 bytes
-    uint256 public totalBoostedStake; // 32 bytes
+    // Slot 0 is Ownable._owner and slot 1 is ReentrancyGuard._status
+    uint32 public migrationRequestTime; //      4 bytes -┐
+    uint40 public lastRewardTime; //            5 bytes  │  Slot 2 (14/32)
+    uint40 public rewardEndTime; //             5 bytes -┘
+    address public pendingMigrationAddress; // 20 bytes -── Slot 3 (20/32)
+    uint256 public rewardRate; //              32 bytes -── Slot 4 (full)
+    uint256 public totalBoostedStake; //       32 bytes -── Slot 5 (full)
 
     // Levels
     Level[] public levels;
@@ -60,9 +54,9 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
      * @param totalHarvestedRewards Total rewards claimed by the user
      */
     struct User {
-        uint64 stakeIndex; // 8 bytes
-        uint128 totalStakedDexy; // 16 bytes
-        uint128 totalHarvestedRewards; // 16 bytes
+        uint64 stakeIndex; //              8 bytes -┐  Slot 0 (24/32)
+        uint128 totalStakedDexy; //       16 bytes -┘
+        uint128 totalHarvestedRewards; // 16 bytes -── Slot 1 (16/32)
     }
 
     /**
@@ -76,13 +70,13 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
      * @param rewardDebt Reward debt snapshot for MasterChef calculation
      */
     struct Stake {
-        bool unstaked; // 1 byte
-        uint8 level; // 1 byte
-        uint40 timestamp; // 5 bytes
-        uint40 rewardStartTime; // 5 bytes
-        uint40 unlockTime; // 5 bytes
-        uint128 stakedDexy; // 16 bytes
-        uint256 rewardDebt; // 32 bytes
+        bool unstaked; //          1 byte  -┐
+        uint8 level; //            1 byte   │
+        uint40 timestamp; //       5 bytes  │  Slot 0 (17/32)
+        uint40 rewardStartTime; // 5 bytes  │
+        uint40 unlockTime; //      5 bytes -┘
+        uint128 stakedDexy; //    16 bytes -── Slot 1 (16/32)
+        uint256 rewardDebt; //    32 bytes -── Slot 2 (full)
     }
 
     /**
@@ -92,9 +86,9 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
      * @param totalStaked Total DEXY staked in this level globally
      */
     struct Level {
-        uint32 lockingPeriod; // 4 bytes
-        uint64 boostP; // 8 bytes
-        uint128 totalStaked; // 16 bytes
+        uint32 lockingPeriod; // 4 bytes -┐
+        uint64 boostP; //        8 bytes  │  Slot 0 (28/32)
+        uint128 totalStaked; // 16 bytes -┘
     }
 
     // Errors
