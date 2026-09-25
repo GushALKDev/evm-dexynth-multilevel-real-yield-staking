@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {RegressionBase} from "./RegressionBase.sol";
+import {StakingFixture} from "../utils/StakingFixture.sol";
 
 /**
  * @notice Round 1 finding 2: with a 6-decimal reward token, rewardRate truncation and the per-update
  *         accumulator truncation lost rewards, down to zero when the pool was updated every block
  */
-contract RewardPrecisionTest is RegressionBase {
+contract RewardPrecisionTest is StakingFixture {
     uint256 internal constant FUNDING = 1000e6; // 1000 tokens with 6 decimals
 
     function setUp() public {

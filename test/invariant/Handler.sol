@@ -2,13 +2,13 @@
 pragma solidity 0.8.28;
 
 import {Test, console} from "forge-std/Test.sol";
-import {DexynthStakingV2_1} from "../../src/DexynthStaking.sol";
+import {DexynthStakingV2_2} from "../../src/DexynthStaking.sol";
 import {DEXYToken} from "../../src/DEXY.sol";
 import {RewardToken} from "../../src/RewardToken.sol";
 import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
 
 /**
- * @title Handler for DexynthStakingV2_1 Invariant Testing
+ * @title Handler for DexynthStakingV2_2 Invariant Testing
  * @notice Provides bounded actions for stateful fuzz testing
  * @dev Tracks ghost variables to verify protocol invariants
  */
@@ -17,7 +17,7 @@ contract Handler is Test {
                                STATE
     //////////////////////////////////////////////////////////////*/
 
-    DexynthStakingV2_1 public staking;
+    DexynthStakingV2_2 public staking;
     DEXYToken public dexy;
     RewardToken public rewardToken;
 
@@ -43,7 +43,7 @@ contract Handler is Test {
                              CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
-    constructor(DexynthStakingV2_1 _staking, DEXYToken _dexy, RewardToken _rewardToken) {
+    constructor(DexynthStakingV2_2 _staking, DEXYToken _dexy, RewardToken _rewardToken) {
         staking = _staking;
         dexy = _dexy;
         rewardToken = _rewardToken;
@@ -109,7 +109,7 @@ contract Handler is Test {
      * @param stakeIndexSeed Seed to select stake index
      */
     function unstake(uint256 actorSeed, uint256 stakeIndexSeed) public useActor(actorSeed) trackCall {
-        (uint64 userStakeCount,,) = staking.users(currentActor);
+        (uint64 userStakeCount,,,,,) = staking.users(currentActor);
 
         // Skip if user has no stakes
         if (userStakeCount == 0) return;
@@ -117,7 +117,7 @@ contract Handler is Test {
         uint64 stakeIndex = uint64(stakeIndexSeed % userStakeCount);
 
         // Get stake info
-        (bool unstaked, uint8 level,,, uint40 unlockTime, uint128 stakedDexy,) =
+        (bool unstaked, uint8 level,, uint40 unlockTime, uint128 stakedDexy,) =
             staking.stakeInfo(currentActor, stakeIndex);
 
         // Skip if already unstaked or still locked
@@ -145,7 +145,7 @@ contract Handler is Test {
      * @param actorSeed Seed to select actor
      */
     function harvest(uint256 actorSeed) public useActor(actorSeed) trackCall {
-        (, uint128 totalStakedDexy,) = staking.users(currentActor);
+        (,, uint128 totalStakedDexy,,,) = staking.users(currentActor);
 
         // Skip if user has nothing staked
         if (totalStakedDexy == 0) return;

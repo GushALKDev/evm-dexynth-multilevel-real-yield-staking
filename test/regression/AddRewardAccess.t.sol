@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {RegressionBase} from "./RegressionBase.sol";
+import {StakingFixture} from "../utils/StakingFixture.sol";
 
 /**
  * @notice Round 1 finding 1: addStakingReward was permissionless and anyone could reschedule the stream
  */
-contract AddRewardAccessTest is RegressionBase {
+contract AddRewardAccessTest is StakingFixture {
     function setUp() public {
         _deploy(18);
     }

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {RegressionBase} from "./RegressionBase.sol";
+import {StakingFixture} from "../utils/StakingFixture.sol";
 
 /**
  * @notice Round 1 finding 4: rewards streamed while totalBoostedStake was zero stayed in the contract
  *         with no claimant, including when the only stake had a boosted amount of zero
  */
-contract UnallocatedRewardsTest is RegressionBase {
+contract UnallocatedRewardsTest is StakingFixture {
     bytes4 internal constant ZERO_BOOSTED_STAKE = bytes4(keccak256("ZeroBoostedStake()"));
 
     function setUp() public {

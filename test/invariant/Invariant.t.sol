@@ -3,13 +3,13 @@ pragma solidity 0.8.28;
 
 import {Test, console} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
-import {DexynthStakingV2_1} from "../../src/DexynthStaking.sol";
+import {DexynthStakingV2_2} from "../../src/DexynthStaking.sol";
 import {DEXYToken} from "../../src/DEXY.sol";
 import {RewardToken} from "../../src/RewardToken.sol";
 import {Handler} from "./Handler.sol";
 
 /**
- * @title DexynthStakingV2_1 Invariant Tests
+ * @title DexynthStakingV2_2 Invariant Tests
  * @notice Stateful fuzz testing to verify protocol invariants
  * @dev Uses Handler pattern for bounded actions
  */
@@ -18,7 +18,7 @@ contract Invariant is StdInvariant, Test {
                                STATE
     //////////////////////////////////////////////////////////////*/
 
-    DexynthStakingV2_1 public staking;
+    DexynthStakingV2_2 public staking;
     DEXYToken public dexy;
     RewardToken public rewardToken;
     Handler public handler;
@@ -36,15 +36,15 @@ contract Invariant is StdInvariant, Test {
         rewardToken = new RewardToken();
 
         // Setup staking levels
-        DexynthStakingV2_1.Level[] memory levels = new DexynthStakingV2_1.Level[](5);
-        levels[0] = DexynthStakingV2_1.Level(2592000, 6500000000, 0); // 30 days, 0.65x
-        levels[1] = DexynthStakingV2_1.Level(7776000, 8500000000, 0); // 90 days, 0.85x
-        levels[2] = DexynthStakingV2_1.Level(15552000, 10000000000, 0); // 180 days, 1.0x
-        levels[3] = DexynthStakingV2_1.Level(31536000, 11500000000, 0); // 365 days, 1.15x
-        levels[4] = DexynthStakingV2_1.Level(62208000, 13500000000, 0); // 720 days, 1.35x
+        DexynthStakingV2_2.Level[] memory levels = new DexynthStakingV2_2.Level[](5);
+        levels[0] = DexynthStakingV2_2.Level(2592000, 6500000000, 0); // 30 days, 0.65x
+        levels[1] = DexynthStakingV2_2.Level(7776000, 8500000000, 0); // 90 days, 0.85x
+        levels[2] = DexynthStakingV2_2.Level(15552000, 10000000000, 0); // 180 days, 1.0x
+        levels[3] = DexynthStakingV2_2.Level(31536000, 11500000000, 0); // 365 days, 1.15x
+        levels[4] = DexynthStakingV2_2.Level(62208000, 13500000000, 0); // 720 days, 1.35x
 
         // Deploy staking contract
-        staking = new DexynthStakingV2_1(
+        staking = new DexynthStakingV2_2(
             address(dexy),
             address(rewardToken),
             levels,
@@ -112,7 +112,7 @@ contract Invariant is StdInvariant, Test {
      */
     function invariant_levelTotalConsistency() public view {
         uint256 sumOfLevels = 0;
-        DexynthStakingV2_1.Level[] memory levels = staking.getLevels();
+        DexynthStakingV2_2.Level[] memory levels = staking.getLevels();
 
         for (uint256 i = 0; i < levels.length; i++) {
             sumOfLevels += levels[i].totalStaked;
@@ -129,18 +129,23 @@ contract Invariant is StdInvariant, Test {
     }
 
     /**
-     * @notice INVARIANT: totalBoostedStake must match calculated value
-     * @dev Ensures boost calculations are consistent
+     * @notice INVARIANT: totalBoostedStake equals the sum of the boosted amounts of all open stakes and the sum
+     *         of the users' boosted balances
      */
     function invariant_boostedStakeConsistency() public view {
-        uint256 calculatedBoosted = 0;
-        DexynthStakingV2_1.Level[] memory levels = staking.getLevels();
-
-        for (uint256 i = 0; i < levels.length; i++) {
-            calculatedBoosted += (uint256(levels[i].totalStaked) * levels[i].boostP) / 1e10;
+        uint256 sumStakes = 0;
+        uint256 sumUsers = 0;
+        for (uint256 a = 0; a < handler.getActorCount(); a++) {
+            address actor = handler.getActor(a);
+            (uint64 stakeCount,,, uint128 boostedBalance,,) = staking.users(actor);
+            sumUsers += boostedBalance;
+            for (uint64 i = 0; i < stakeCount; i++) {
+                (bool unstaked,,,,, uint128 boostedAmount) = staking.stakeInfo(actor, i);
+                if (!unstaked) sumStakes += boostedAmount;
+            }
         }
-
-        assertEq(calculatedBoosted, staking.totalBoostedStake(), "totalBoostedStake calculation inconsistent");
+        assertEq(staking.totalBoostedStake(), sumStakes, "totalBoostedStake != sum of open stakes");
+        assertEq(staking.totalBoostedStake(), sumUsers, "totalBoostedStake != sum of user balances");
     }
 
     /**
@@ -152,12 +157,12 @@ contract Invariant is StdInvariant, Test {
 
         for (uint256 a = 0; a < actorCount; a++) {
             address actor = handler.getActor(a);
-            (uint64 stakeCount, uint128 totalStakedDexy,) = staking.users(actor);
+            (uint64 stakeCount,, uint128 totalStakedDexy,,,) = staking.users(actor);
 
             // Sum all active stakes for this user
             uint256 sumActiveStakes = 0;
             for (uint64 i = 0; i < stakeCount; i++) {
-                (bool unstaked,,,,, uint128 stakedDexy,) = staking.stakeInfo(actor, i);
+                (bool unstaked,,,, uint128 stakedDexy,) = staking.stakeInfo(actor, i);
                 if (!unstaked) {
                     sumActiveStakes += stakedDexy;
                 }
@@ -183,25 +188,6 @@ contract Invariant is StdInvariant, Test {
         assertLe(staking.lastRewardTime(), block.timestamp, "lastRewardTime is in the future!");
     }
 
-    /**
-     * @notice INVARIANT: Stake unlockTime >= rewardStartTime
-     * @dev Lock period starts from next epoch, unlock must be after
-     */
-    function invariant_unlockTimeAfterRewardStart() public view {
-        uint256 actorCount = handler.getActorCount();
-
-        for (uint256 a = 0; a < actorCount; a++) {
-            address actor = handler.getActor(a);
-            (uint64 stakeCount,,) = staking.users(actor);
-
-            for (uint64 i = 0; i < stakeCount; i++) {
-                (,,, uint40 rewardStartTime, uint40 unlockTime,,) = staking.stakeInfo(actor, i);
-
-                assertGe(unlockTime, rewardStartTime, "unlockTime < rewardStartTime violates lock semantics");
-            }
-        }
-    }
-
     /*//////////////////////////////////////////////////////////////
                       INVARIANTS - CONFIGURATION
     //////////////////////////////////////////////////////////////*/
@@ -219,7 +205,7 @@ contract Invariant is StdInvariant, Test {
      * @dev Ensures incentive structure remains valid
      */
     function invariant_boostOrderPreserved() public view {
-        DexynthStakingV2_1.Level[] memory levels = staking.getLevels();
+        DexynthStakingV2_2.Level[] memory levels = staking.getLevels();
 
         for (uint256 i = 0; i < levels.length - 1; i++) {
             assertLt(levels[i].boostP, levels[i + 1].boostP, "Boost order violated: lower level has higher boost");

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {RegressionBase} from "./RegressionBase.sol";
+import {StakingFixture} from "../utils/StakingFixture.sol";
 
 /**
  * @notice Round 1 finding 3: executeMigration moved every token balance, including locked principal and
  *         accrued rewards, and a migration request never expired
  */
-contract MigrationTest is RegressionBase {
+contract MigrationTest is StakingFixture {
     bytes4 internal constant MIGRATION_EXPIRED = bytes4(keccak256("MigrationExpired()"));
     bytes4 internal constant ALREADY_MIGRATED = bytes4(keccak256("AlreadyMigrated()"));
     address internal constant NEW_CONTRACT = address(0xDEAD);

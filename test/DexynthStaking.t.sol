@@ -2,12 +2,12 @@
 pragma solidity ^0.8.7;
 
 import {Test} from "forge-std/Test.sol";
-import {DexynthStakingV2_1} from "../src/DexynthStaking.sol";
+import {DexynthStakingV2_2} from "../src/DexynthStaking.sol";
 import {DEXYToken} from "../src/DEXY.sol";
 import {RewardToken} from "../src/RewardToken.sol";
 
 contract DexynthStakingTest is Test {
-    DexynthStakingV2_1 public staking;
+    DexynthStakingV2_2 public staking;
     DEXYToken public dexy;
     RewardToken public rewardToken;
 
@@ -30,15 +30,15 @@ contract DexynthStakingTest is Test {
         rewardToken = new RewardToken();
 
         // Setup Levels (dynamic array)
-        DexynthStakingV2_1.Level[] memory levels = new DexynthStakingV2_1.Level[](5);
-        levels[0] = DexynthStakingV2_1.Level(2592000, 6500000000, 0);
-        levels[1] = DexynthStakingV2_1.Level(7776000, 8500000000, 0);
-        levels[2] = DexynthStakingV2_1.Level(15552000, 10000000000, 0);
-        levels[3] = DexynthStakingV2_1.Level(31536000, 11500000000, 0);
-        levels[4] = DexynthStakingV2_1.Level(62208000, 13500000000, 0);
+        DexynthStakingV2_2.Level[] memory levels = new DexynthStakingV2_2.Level[](5);
+        levels[0] = DexynthStakingV2_2.Level(2592000, 6500000000, 0);
+        levels[1] = DexynthStakingV2_2.Level(7776000, 8500000000, 0);
+        levels[2] = DexynthStakingV2_2.Level(15552000, 10000000000, 0);
+        levels[3] = DexynthStakingV2_2.Level(31536000, 11500000000, 0);
+        levels[4] = DexynthStakingV2_2.Level(62208000, 13500000000, 0);
 
         // Deploy Staking
-        staking = new DexynthStakingV2_1(address(dexy), address(rewardToken), levels, 1296000);
+        staking = new DexynthStakingV2_2(address(dexy), address(rewardToken), levels, 1296000);
 
         // Setup Balances
         require(dexy.transfer(address(staking), 10_000_000 ether), "Transfer failed");
@@ -75,7 +75,7 @@ contract DexynthStakingTest is Test {
         assertEq(staking.getNumberOfLevels(), 5);
 
         // getLevels now returns Level[] directly
-        DexynthStakingV2_1.Level[] memory levels = staking.getLevels();
+        DexynthStakingV2_2.Level[] memory levels = staking.getLevels();
         assertEq(levels[0].lockingPeriod, 2592000);
         assertEq(levels[0].boostP, 6500000000);
         assertEq(levels[4].lockingPeriod, 62208000);
@@ -94,7 +94,7 @@ contract DexynthStakingTest is Test {
         assertEq(staking.pendingMigrationAddress(), newContract);
         assertEq(staking.migrationRequestTime(), block.timestamp);
 
-        vm.expectRevert(DexynthStakingV2_1.TimelockStillActive.selector);
+        vm.expectRevert(DexynthStakingV2_2.TimelockStillActive.selector);
         staking.executeMigration();
 
         vm.warp(block.timestamp + 30 days + 1);
@@ -135,20 +135,20 @@ contract DexynthStakingTest is Test {
     function testMigrationFailAlreadyPending() public {
         staking.requestMigration(address(0x999));
 
-        vm.expectRevert(DexynthStakingV2_1.MigrationAlreadyPending.selector);
+        vm.expectRevert(DexynthStakingV2_2.MigrationAlreadyPending.selector);
         staking.requestMigration(address(0x888));
     }
 
     function testMigrationFailNoRequest() public {
-        vm.expectRevert(DexynthStakingV2_1.NoMigrationRequested.selector);
+        vm.expectRevert(DexynthStakingV2_2.NoMigrationRequested.selector);
         staking.executeMigration();
 
-        vm.expectRevert(DexynthStakingV2_1.NoMigrationRequested.selector);
+        vm.expectRevert(DexynthStakingV2_2.NoMigrationRequested.selector);
         staking.cancelMigration();
     }
 
     function testGetLevels() public view {
-        DexynthStakingV2_1.Level[] memory levelsData = staking.getLevels();
+        DexynthStakingV2_2.Level[] memory levelsData = staking.getLevels();
         // Check a few values - using hardcoded expected values since levels are set in constructor
         assertEq(levelsData[0].lockingPeriod, 2592000);
         assertEq(levelsData[0].boostP, 6500000000);
@@ -223,20 +223,20 @@ contract DexynthStakingTest is Test {
         assertGt(pending2 * 100 / pending1, 150); // At least 1.5x
     }
 
-    function testNoRewardsBeforeRewardStartTime() public {
-        // Add rewards first
+    /**
+     * @dev v2.2 change: rewards accrue and are claimable from the stake's block, not from the next epoch start.
+     *      Expected: 10,000 tokens * 5 / 30 = 1666.666... tokens, floored to 1666666666666666666666 wei. The
+     *      accumulator truncation is below boosted / 1e36 wei, far from moving the floor
+     */
+    function testRewardsAccrueFromStakeTime() public {
         staking.addStakingReward(10000 ether, 30 days);
-
-        // User stakes
         vm.prank(user1);
         staking.stake(1000 ether, 0);
-
-        // Check pending - should be 0 because still before rewardStartTime
         assertEq(staking.pendingRewards(user1), 0);
 
-        // Even after some time but before epoch ends
+        // Five days later, still before the next epoch starts
         vm.warp(block.timestamp + 5 days);
-        assertEq(staking.pendingRewards(user1), 0);
+        assertEq(staking.pendingRewards(user1), uint256(10000 ether) * 5 / 30);
     }
 
     function testO1GasPerformance() public {
@@ -264,7 +264,7 @@ contract DexynthStakingTest is Test {
 
     function testLevelTotalStakedUpdates() public {
         // Check initial totalStaked is 0
-        DexynthStakingV2_1.Level[] memory levelsBefore = staking.getLevels();
+        DexynthStakingV2_2.Level[] memory levelsBefore = staking.getLevels();
         assertEq(levelsBefore[0].totalStaked, 0);
 
         // Stake
@@ -272,7 +272,7 @@ contract DexynthStakingTest is Test {
         staking.stake(1000 ether, 0);
 
         // Check totalStaked increased
-        DexynthStakingV2_1.Level[] memory levelsAfter = staking.getLevels();
+        DexynthStakingV2_2.Level[] memory levelsAfter = staking.getLevels();
         assertEq(levelsAfter[0].totalStaked, 1000 ether);
 
         // Warp and unstake
@@ -281,7 +281,7 @@ contract DexynthStakingTest is Test {
         staking.unstake(0);
 
         // Check totalStaked decreased
-        DexynthStakingV2_1.Level[] memory levelsEnd = staking.getLevels();
+        DexynthStakingV2_2.Level[] memory levelsEnd = staking.getLevels();
         assertEq(levelsEnd[0].totalStaked, 0);
     }
 
@@ -302,26 +302,9 @@ contract DexynthStakingTest is Test {
         assertEq(epoch2, epoch1 + 1);
     }
 
-    function testRewardStartTimeAlignedWithEpoch() public {
-        uint32 epochDuration = staking.epochDuration();
-        uint40 genesisTimetamp = staking.I_GENESIS_EPOCH_TIMESTAMP();
-        uint32 currentEpoch = staking.getCurrentEpochIndex();
-
-        // Calculate expected next epoch start
-        uint40 expectedNextEpochStart = uint40(genesisTimetamp + uint256(currentEpoch + 1) * epochDuration);
-
-        // User stakes
-        vm.prank(user1);
-        staking.stake(1000 ether, 0);
-
-        // Check stake's rewardStartTime matches next epoch start
-        (,,, uint40 rewardStartTime,,,) = staking.stakeInfo(user1, 0);
-        assertEq(rewardStartTime, expectedNextEpochStart);
-    }
-
     function testUnlockTimeCalculatedFromEpochStart() public {
         uint32 epochDuration = staking.epochDuration();
-        DexynthStakingV2_1.Level[] memory levels = staking.getLevels();
+        DexynthStakingV2_2.Level[] memory levels = staking.getLevels();
         uint32 lockingPeriod = levels[0].lockingPeriod;
 
         // Get next epoch start
@@ -334,7 +317,7 @@ contract DexynthStakingTest is Test {
         staking.stake(1000 ether, 0);
 
         // Check unlockTime = nextEpochStart + lockingPeriod
-        (,,,, uint40 unlockTime,,) = staking.stakeInfo(user1, 0);
+        (,,, uint40 unlockTime,,) = staking.stakeInfo(user1, 0);
         assertEq(unlockTime, nextEpochStart + lockingPeriod);
     }
 
@@ -369,7 +352,7 @@ contract DexynthStakingTest is Test {
         assertEq(balanceUser2Before - balanceUser2After, 1800 ether);
 
         // Verify via Level.totalStaked instead of deprecated mapping
-        DexynthStakingV2_1.Level[] memory levels = staking.getLevels();
+        DexynthStakingV2_2.Level[] memory levels = staking.getLevels();
         assertGt(levels[0].totalStaked + levels[4].totalStaked, 0);
     }
 
@@ -382,8 +365,8 @@ contract DexynthStakingTest is Test {
         vm.prank(user2);
         staking.stake(1800 ether, 1);
 
-        (uint64 index1, uint128 totalStaked1, uint128 totalHarvested1) = staking.users(user1);
-        (uint64 index2, uint128 totalStaked2, uint128 totalHarvested2) = staking.users(user2);
+        (uint64 index1,, uint128 totalStaked1,, uint128 totalHarvested1,) = staking.users(user1);
+        (uint64 index2,, uint128 totalStaked2,, uint128 totalHarvested2,) = staking.users(user2);
 
         assertEq(totalStaked1, 1000 ether);
         assertEq(totalStaked2, 1800 ether);
@@ -402,9 +385,9 @@ contract DexynthStakingTest is Test {
         vm.prank(user2);
         staking.stake(1800 ether, 1);
 
-        (, uint8 level1a,, uint40 start1a,, uint128 staked1a,) = staking.stakeInfo(user1, 0);
-        (, uint8 level1b,, uint40 start1b,, uint128 staked1b,) = staking.stakeInfo(user1, 1);
-        (, uint8 level2,, uint40 start2,, uint128 staked2,) = staking.stakeInfo(user2, 0);
+        (, uint8 level1a,, uint40 unlock1a, uint128 staked1a,) = staking.stakeInfo(user1, 0);
+        (, uint8 level1b,, uint40 unlock1b, uint128 staked1b,) = staking.stakeInfo(user1, 1);
+        (, uint8 level2,, uint40 unlock2, uint128 staked2,) = staking.stakeInfo(user2, 0);
 
         assertEq(staked1a, 600 ether);
         assertEq(staked1b, 400 ether);
@@ -414,26 +397,26 @@ contract DexynthStakingTest is Test {
         assertEq(level1b, 4);
         assertEq(level2, 1);
 
-        // rewardStartTime is the timestamp of next epoch start, not epoch index
+        // unlockTime is the start of the next epoch plus the level's lockingPeriod
         uint32 epochDuration = staking.epochDuration();
         uint40 genesisTimestamp = staking.I_GENESIS_EPOCH_TIMESTAMP();
         uint32 currentEpoch = staking.getCurrentEpochIndex();
-        uint40 expectedStart = uint40(genesisTimestamp + uint256(currentEpoch + 1) * epochDuration);
+        uint40 nextEpochStart = uint40(genesisTimestamp + uint256(currentEpoch + 1) * epochDuration);
 
-        assertEq(start1a, expectedStart);
-        assertEq(start1b, expectedStart);
-        assertEq(start2, expectedStart);
+        assertEq(unlock1a, nextEpochStart + 2592000);
+        assertEq(unlock1b, nextEpochStart + 62208000);
+        assertEq(unlock2, nextEpochStart + 7776000);
     }
 
     function testStakeFailZeroAmount() public {
         vm.prank(user1);
-        vm.expectRevert(DexynthStakingV2_1.WrongParams.selector);
+        vm.expectRevert(DexynthStakingV2_2.WrongParams.selector);
         staking.stake(0, 0);
     }
 
     function testStakeFailInvalidLevel() public {
         vm.prank(user1);
-        vm.expectRevert(DexynthStakingV2_1.WrongParams.selector);
+        vm.expectRevert(DexynthStakingV2_2.WrongParams.selector);
         staking.stake(100 ether, 5); // Level 5 does not exist (0-4)
     }
 
@@ -504,8 +487,8 @@ contract DexynthStakingTest is Test {
         vm.prank(user2);
         staking.unstake(0);
 
-        (, uint128 totalStaked1,) = staking.users(user1);
-        (, uint128 totalStaked2,) = staking.users(user2);
+        (,, uint128 totalStaked1,,,) = staking.users(user1);
+        (,, uint128 totalStaked2,,,) = staking.users(user2);
 
         assertEq(totalStaked1, 400 ether);
         assertEq(totalStaked2, 0);
@@ -528,9 +511,9 @@ contract DexynthStakingTest is Test {
         vm.prank(user2);
         staking.unstake(0);
 
-        (bool unstaked1a,,,,,,) = staking.stakeInfo(user1, 0);
-        (bool unstaked1b,,,,,,) = staking.stakeInfo(user1, 1);
-        (bool unstaked2,,,,,,) = staking.stakeInfo(user2, 0);
+        (bool unstaked1a,,,,,) = staking.stakeInfo(user1, 0);
+        (bool unstaked1b,,,,,) = staking.stakeInfo(user1, 1);
+        (bool unstaked2,,,,,) = staking.stakeInfo(user2, 0);
 
         assertEq(unstaked1a, true);
         assertEq(unstaked1b, false);
@@ -543,7 +526,7 @@ contract DexynthStakingTest is Test {
 
         // Try to unstake immediately
         vm.prank(user1);
-        vm.expectRevert(DexynthStakingV2_1.StakeStillLocked.selector);
+        vm.expectRevert(DexynthStakingV2_2.StakeStillLocked.selector);
         staking.unstake(0);
     }
 
@@ -555,7 +538,7 @@ contract DexynthStakingTest is Test {
 
         vm.startPrank(user1);
         staking.unstake(0);
-        vm.expectRevert(DexynthStakingV2_1.AlreadyUnstaked.selector);
+        vm.expectRevert(DexynthStakingV2_2.AlreadyUnstaked.selector);
         staking.unstake(0); // Should fail
         vm.stopPrank();
     }
@@ -642,8 +625,8 @@ contract DexynthStakingTest is Test {
         vm.prank(user2);
         staking.harvest();
 
-        (,, uint128 totalHarvested1) = staking.users(user1);
-        (,, uint128 totalHarvested2) = staking.users(user2);
+        (,,,, uint128 totalHarvested1,) = staking.users(user1);
+        (,,,, uint128 totalHarvested2,) = staking.users(user2);
 
         assertGt(totalHarvested1, 0);
         assertGt(totalHarvested2, 0);
@@ -659,7 +642,7 @@ contract DexynthStakingTest is Test {
 
         vm.startPrank(user1);
         staking.harvest();
-        vm.expectRevert(DexynthStakingV2_1.NoRewardsToHarvest.selector);
+        vm.expectRevert(DexynthStakingV2_2.NoRewardsToHarvest.selector);
         staking.harvest(); // Should fail: NoRewardsToHarvest (already harvested)
         vm.stopPrank();
     }
@@ -677,7 +660,7 @@ contract DexynthStakingTest is Test {
         // The contract checks if totalUserRewards == 0 at the end of harvest()
         // and reverts with NoRewardsToHarvest if so.
 
-        vm.expectRevert(DexynthStakingV2_1.NoRewardsToHarvest.selector);
+        vm.expectRevert(DexynthStakingV2_2.NoRewardsToHarvest.selector);
         staking.harvest();
     }
 
@@ -702,12 +685,12 @@ contract DexynthStakingTest is Test {
         assertEq(balanceBefore - balanceAfter, amount);
 
         // Verify stake info
-        (, uint8 stakedLevel,,,, uint128 staked,) = staking.stakeInfo(user1, 0);
+        (, uint8 stakedLevel,,, uint128 staked,) = staking.stakeInfo(user1, 0);
         assertEq(staked, amount);
         assertEq(stakedLevel, level);
 
         // Verify user totals
-        (, uint128 totalStaked,) = staking.users(user1);
+        (,, uint128 totalStaked,,,) = staking.users(user1);
         assertEq(totalStaked, amount);
     }
 
@@ -723,7 +706,7 @@ contract DexynthStakingTest is Test {
         staking.stake(_amount, _levelIndex);
 
         // Get locking period from contract
-        DexynthStakingV2_1.Level[] memory levelsData = staking.getLevels();
+        DexynthStakingV2_2.Level[] memory levelsData = staking.getLevels();
         uint256 lockingPeriod = levelsData[_levelIndex].lockingPeriod;
 
         // Warp to unlock (lockingPeriod + 1 epoch buffer to ensure we are in the next epoch)
@@ -781,13 +764,13 @@ contract DexynthStakingTest is Test {
         vm.stopPrank();
 
         // Verify User Totals
-        (uint64 stakeIndex, uint128 totalStaked,) = staking.users(user1);
+        (uint64 stakeIndex,, uint128 totalStaked,,,) = staking.users(user1);
         assertEq(totalStaked, amount1 + amount2);
         assertEq(stakeIndex, 2);
 
         // Verify Individual Stakes
-        (, uint8 l1,,,, uint128 staked1,) = staking.stakeInfo(user1, 0);
-        (, uint8 l2,,,, uint128 staked2,) = staking.stakeInfo(user1, 1);
+        (, uint8 l1,,, uint128 staked1,) = staking.stakeInfo(user1, 0);
+        (, uint8 l2,,, uint128 staked2,) = staking.stakeInfo(user1, 1);
 
         assertEq(staked1, amount1);
         assertEq(l1, level1);
