@@ -341,7 +341,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
      * @param _amount Amount of REWARD_TOKEN to add
      * @param _duration Duration over which to distribute rewards
      */
-    function addStakingReward(uint256 _amount, uint256 _duration) external nonReentrant {
+    function addStakingReward(uint256 _amount, uint256 _duration) external onlyOwner nonReentrant {
         if (_duration == 0) revert ZeroDuration();
 
         _updatePool();
