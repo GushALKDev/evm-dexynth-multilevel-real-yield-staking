@@ -1,5 +1,9 @@
 # Dexynth Multilevel Real Yield Staking
 
+Original contract written at Dexynth (2023-2024). v2 and v2.1 are a later independent rework (Dec 2025 - Jan 2026) that replaces the loop-based reward logic with an O(1) reward accumulator.
+
+**Status:** Proof of concept. Not audited. Not deployed.
+
 ## 🛡️ Security Audit & Hardening (v2.1 - Jan 2026)
 A comprehensive internal audit and hardening phase was conducted to ensure mathematical correctness and robust security guarantees.
 
