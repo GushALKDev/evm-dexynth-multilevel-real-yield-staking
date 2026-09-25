@@ -116,6 +116,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
     error MigrationExpired();
     error AlreadyMigrated();
     error StakeNotFound();
+    error SameToken();
 
     // Events
 
@@ -173,6 +174,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
     ) {
         // Checking addresses
         if (address(_dexy) == address(0) || address(_rewardToken) == address(0)) revert WrongParams();
+        if (_dexy == _rewardToken) revert SameToken();
         // Checking minimum epoch duration
         if (_epochDuration < 86400) revert MinimumOneDay();
         if (_levels.length == 0) revert NoLevels();
