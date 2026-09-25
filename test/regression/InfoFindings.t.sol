@@ -69,4 +69,18 @@ contract InfoFindingsTest is RegressionBase {
             levels[i] = DexynthStakingV2_1.Level(uint32((i + 1) * 1 days), uint64(boost), 0);
         }
     }
+
+    /**
+     * @notice migrationRequestTime was stored as uint32, which truncates timestamps from February 2106
+     * @dev 2^32 + 100 is 100 seconds after the last uint32 timestamp
+     */
+    function test_MigrationTimestampAfter2106() public {
+        vm.warp(uint256(type(uint32).max) + 101);
+        staking.requestMigration(address(0xDEAD));
+        assertEq(staking.migrationRequestTime(), block.timestamp);
+
+        vm.warp(block.timestamp + 30 days);
+        staking.executeMigration();
+        assertTrue(staking.migrated());
+    }
 }

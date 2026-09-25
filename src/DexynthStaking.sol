@@ -35,8 +35,8 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
     uint256 private constant BOOST_PRECISION = 1e10;
 
     // Slot 0 is Ownable._owner and slot 1 is ReentrancyGuard._status
-    uint32 public migrationRequestTime; //      4 bytes -┐
-    uint40 public lastRewardTime; //            5 bytes  │  Slot 2 (15/32)
+    uint40 public migrationRequestTime; //      5 bytes -┐
+    uint40 public lastRewardTime; //            5 bytes  │  Slot 2 (16/32)
     uint40 public rewardEndTime; //             5 bytes  │
     bool public migrated; //                    1 byte  -┘
     address public pendingMigrationAddress; // 20 bytes -── Slot 3 (20/32)
@@ -553,7 +553,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
             revert MigrationAlreadyPending();
         }
         pendingMigrationAddress = _newContract;
-        migrationRequestTime = uint32(block.timestamp);
+        migrationRequestTime = block.timestamp.toUint40();
         emit MigrationRequested(_newContract, migrationRequestTime + MIGRATION_DELAY);
     }
 
