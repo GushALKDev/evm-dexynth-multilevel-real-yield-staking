@@ -505,7 +505,7 @@ contract DexynthStakingV2_2 is Ownable, ReentrancyGuard {
      * @param _amount Amount of REWARD_TOKEN to transfer in, may be zero to only reschedule
      * @param _duration Length of the new stream in seconds
      */
-    function addStakingReward(uint256 _amount, uint256 _duration) external onlyOwner nonReentrant {
+    function addStakingReward(uint256 _amount, uint256 _duration) external nonReentrant onlyOwner {
         if (migrated) revert AlreadyMigrated();
         if (_duration == 0) revert ZeroDuration();
         uint256 funded = totalRewardsFunded + _amount;
@@ -516,6 +516,9 @@ contract DexynthStakingV2_2 is Ownable, ReentrancyGuard {
         // funded fits in uint128, checked above
         totalRewardsFunded = uint128(funded);
         uint256 leftover = unallocatedRewards;
+        // rewardRate keeps 36 extra decimals, so rebuilding the unstreamed amount from it loses less than
+        // (rewardEndTime - now) / 1e36 units
+        // slither-disable-next-line divide-before-multiply
         if (rewardEndTime > block.timestamp) leftover += (rewardEndTime - block.timestamp) * rewardRate;
         uint256 newRate = (leftover + _amount * PRECISION) / _duration;
         rewardRate = newRate;
@@ -565,7 +568,7 @@ contract DexynthStakingV2_2 is Ownable, ReentrancyGuard {
      *      rewards already accrued to stakers stay in the contract. Afterwards stake, addStakingReward and
      *      requestMigration revert, and unstake ignores the lock
      */
-    function executeMigration() external onlyOwner nonReentrant {
+    function executeMigration() external nonReentrant onlyOwner {
         uint256 requestTime = migrationRequestTime;
         if (requestTime == 0) revert NoMigrationRequested();
         if (block.timestamp < requestTime + MIGRATION_DELAY) revert TimelockStillActive();
@@ -664,6 +667,8 @@ contract DexynthStakingV2_2 is Ownable, ReentrancyGuard {
     function _settle(User storage _user) private {
         uint256 acc = accRewardPerBoostedShare;
         uint256 snapshot = _user.accRewardSnapshot;
+        // Nothing accrued since the last settlement
+        // slither-disable-next-line incorrect-equality
         if (acc == snapshot) return;
         uint256 boosted = _user.boostedBalance;
         if (boosted > 0) _user.storedRewards += Math.mulDiv(boosted, acc - snapshot, PRECISION).toUint128();
