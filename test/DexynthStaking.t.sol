@@ -697,8 +697,9 @@ contract DexynthStakingTest is Test {
     // --- Fuzz Tests ---
     function testFuzz_Stake(uint256 amount, uint8 level) public {
         // Bound inputs to valid ranges
-        // Amount: 1 wei to 100,000 ether (user balance)
-        amount = bound(amount, 1, 100_000 ether);
+        // Amount: 2 wei to 100,000 ether (user balance). 2 wei is the smallest amount with a non-zero
+        // boosted stake at the lowest multiplier (2 * 0.65 floors to 1), smaller stakes revert
+        amount = bound(amount, 2, 100_000 ether);
         // Level: 0 to 4
         level = uint8(bound(level, 0, 4));
 

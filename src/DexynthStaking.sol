@@ -37,6 +37,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
     address public pendingMigrationAddress; // 20 bytes -── Slot 3 (20/32)
     uint256 public rewardRate; //              32 bytes -── Slot 4 (full)
     uint256 public totalBoostedStake; //       32 bytes -── Slot 5 (full)
+    uint256 public unallocatedRewards; //      32 bytes -── Slot 6 (full)
 
     // Levels
     Level[] public levels;
@@ -108,6 +109,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
     error MigrationAlreadyPending();
     error NoLevels();
     error ZeroDuration();
+    error ZeroBoostedStake();
 
     // Events
 
@@ -203,6 +205,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
     function stake(uint256 _amount, uint8 _level) external nonReentrant {
         if (_amount == 0) revert WrongParams();
         if (_level >= levels.length) revert WrongParams();
+        if ((_amount * levels[_level].boostP) / BOOST_PRECISION == 0) revert ZeroBoostedStake();
 
         _updatePool();
 
@@ -349,8 +352,9 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
             remainingRewards = (rewardEndTime - block.timestamp) * rewardRate;
         }
 
-        // New rate = (remaining + new) / new duration
-        rewardRate = (remainingRewards + _amount * PRECISION) / _duration;
+        // New rate = (remaining + unallocated + new) / new duration
+        rewardRate = (remainingRewards + unallocatedRewards + _amount * PRECISION) / _duration;
+        unallocatedRewards = 0;
         rewardEndTime = (block.timestamp + _duration).toUint40();
 
         // Interactions
@@ -439,22 +443,21 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
     function _updatePool() private {
         if (block.timestamp <= lastRewardTime) return;
 
-        if (totalBoostedStake == 0) {
-            lastRewardTime = uint40(block.timestamp);
-            return;
-        }
-
-        // Calculate time elapsed (capped at reward end time)
-        uint256 endTime =
-            rewardEndTime > 0 ? (block.timestamp < rewardEndTime ? block.timestamp : rewardEndTime) : block.timestamp;
-
+        // Rewards stream only until rewardEndTime
+        uint256 endTime = block.timestamp < rewardEndTime ? block.timestamp : rewardEndTime;
         if (endTime <= lastRewardTime) {
             lastRewardTime = uint40(block.timestamp);
             return;
         }
 
-        uint256 timeElapsed = endTime - lastRewardTime;
-        uint256 reward = timeElapsed * rewardRate;
+        uint256 reward = (endTime - lastRewardTime) * rewardRate;
+
+        // With no boosted stake nobody can receive the stream, so it is kept for the next addStakingReward
+        if (totalBoostedStake == 0) {
+            unallocatedRewards += reward;
+            lastRewardTime = uint40(block.timestamp);
+            return;
+        }
 
         // Distribute to each level proportionally
         uint256 numLevels = levels.length;
