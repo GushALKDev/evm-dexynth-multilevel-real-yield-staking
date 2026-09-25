@@ -68,6 +68,45 @@ function executeMigration() external;
 - `addStakingReward`: `_amount` in `REWARD_TOKEN` units, `_duration` in seconds. Callable by any address.
 - Views: `getLevels()`, `getNumberOfLevels()`, `getCurrentEpochIndex()`, `pendingRewards(address)`.
 
+## Trust assumptions and limitations
+
+### Owner powers
+
+The owner is the deployer (OpenZeppelin `Ownable` v4.9.3, single-step `transferOwnership` and `renounceOwnership`). Its only contract-specific powers are the migration functions:
+
+| Function | What it can do to user funds or rewards |
+|----------|------------------------------------------|
+| `requestMigration(address)` | Stores a destination address and starts a 30 day delay. Only one request can be pending. Nothing moves yet. |
+| `cancelMigration()` | Clears the pending request. |
+| `executeMigration()` | Once 30 days have passed since the request, transfers the contract's entire `REWARD_TOKEN` and DEXY balances to the stored address. This includes the principal of stakes that are still locked, all unclaimed rewards and all rewards scheduled but not yet streamed. |
+| `transferOwnership(address)` | Hands all of the above to another address. |
+| `renounceOwnership()` | Removes the owner, which disables migration permanently. |
+
+Consequences:
+
+- Users with stakes locked for longer than the 30 day notice cannot exit before a migration executes. Their principal moves with it.
+- `executeMigration` does not update any staking state. After it runs, `unstake` and `harvest` revert for lack of balance, and users depend on the destination contract to recover their funds.
+- A migration request does not expire. It can be executed at any time after the 30 day delay, even long after it was made.
+- There is no emergency withdrawal for users, no pause and no function to recover rewards that nobody can claim.
+
+### Reward funding
+
+- `addStakingReward` has no access control. Any address can call it, including with `_amount = 0`. Each call spreads the unstreamed remainder of the current period, plus the new amount, over the new `_duration`. A caller can therefore stretch the remaining rewards over a very long duration (slowing the stream to almost nothing) or compress them into one second (paying them all to the current stakers at once).
+- Rewards streamed while `totalBoostedStake` is zero are not assigned to anyone and stay in the contract. This includes the time between funding and the first stake, and periods where the only stakes are too small to have a non-zero boosted stake (for example 1 wei at a 0.65x level).
+- `rewardRate` is rounded down, so up to `_duration - 1` units of each funding are never streamed. They also stay in the contract.
+- The reward token is expected to transfer exactly the requested amount. Fee-on-transfer and rebasing tokens are not supported.
+
+### Precision and token decimals
+
+- The contract does not read `decimals()`. On each pool update, a level's accumulator grows by `levelReward * 1e18 / level.totalStaked`, rounded down. When the reward token has few decimals (for example 6, like USDT on Ethereum) and a level holds a large amount of DEXY, this increment can round to zero when the pool is updated often, and the rewards of that interval are lost. The tests only use 18-decimal tokens.
+- The constructor does not reject `DEXY == REWARD_TOKEN`.
+
+### Other behaviour to be aware of
+
+- Stakes accrue rewards from the moment they are created. `rewardStartTime` only delays when those rewards can be claimed.
+- `harvest` loops over every stake the caller has ever created, including unstaked ones, so its gas grows linearly with that number. `unstake` of a single stake does not have this loop.
+- `unstake` with an index the caller never used does not revert: it marks that index as unstaked, transfers nothing and emits `DEXYUnstaked` with amount 0.
+
 ## Changelog
 
 ### v2.1 (Jan 2026): internal review
@@ -162,6 +201,15 @@ With the configuration above, the invariant suite found no violations across 256
 - **Token transfers:** OpenZeppelin `SafeERC20`.
 - **Access control:** OpenZeppelin `Ownable` (single owner) on the three migration functions. `addStakingReward` is not restricted.
 - **Migration delay:** 30 days between `requestMigration` and `executeMigration`.
+
+## Review notes
+
+### v2.1 rounding fix in `totalBoostedStake`
+
+- **Cause.** In v2, `stake` and `unstake` updated `totalBoostedStake` incrementally with `amount * boostP / 1e10` per stake, rounded down each time. `_updatePool` splits rewards with the per-level value `level.totalStaked * boostP / 1e10`. The sum of per-stake rounded values can be lower than the sum of per-level values, so `totalBoostedStake` drifted from the value the reward split assumes.
+- **Fix.** `totalBoostedStake` is recomputed from the level totals after every stake and unstake (`_recalculateTotalBoostedStake`, O(number of levels)).
+- **Test.** No dedicated unit regression test yet. The stateful invariant `invariant_boostedStakeConsistency` checks that `totalBoostedStake` equals the per-level sum after every handler call.
+- **Commits.** The accumulator was introduced in `fd8661b` (2025-12-23). The fix is in `d39e101` (2026-01-23).
 
 ## Original design model (Excel)
 
