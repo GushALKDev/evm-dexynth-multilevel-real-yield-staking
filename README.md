@@ -156,6 +156,17 @@ To measure gas yourself:
 forge test --gas-report
 ```
 
+## Setup
+
+The dependencies in `lib/` are not tracked by git (`lib/` is listed in `.gitignore`), so `git clone --recursive` does not fetch them. Install the versions used by this repo with `forge install`:
+
+```bash
+git clone https://github.com/GushALKDev/evm-dexynth-multilevel-real-yield-staking.git
+cd evm-dexynth-multilevel-real-yield-staking
+forge install foundry-rs/forge-std@v1.12.0 OpenZeppelin/openzeppelin-contracts@v4.9.3
+forge build
+```
+
 ## Testing
 
 ```bash
