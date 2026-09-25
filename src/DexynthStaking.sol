@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/token/ERC20/utils/SafeERC20.sol";
 import {SafeCast} from "@openzeppelin/utils/math/SafeCast.sol";
+import {Math} from "@openzeppelin/utils/math/Math.sol";
 import {Ownable} from "@openzeppelin/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/security/ReentrancyGuard.sol";
 
@@ -25,7 +26,8 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
 
     // Constants addresses
     uint32 public constant MIGRATION_DELAY = 30 days;
-    uint256 private constant ACC_PRECISION = 1e18;
+    // Scale of rewardRate and accRewardPerShare, high enough that 6-decimal reward tokens do not truncate to zero
+    uint256 private constant PRECISION = 1e36;
     uint256 private constant BOOST_PRECISION = 1e10;
 
     // Slot 0 is Ownable._owner and slot 1 is ReentrancyGuard._status
@@ -216,7 +218,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
             unlockTime: unlockTime,
             level: _level,
             unstaked: false,
-            rewardDebt: (_amount * accRewardPerShare[_level]) / ACC_PRECISION
+            rewardDebt: Math.mulDiv(_amount, accRewardPerShare[_level], PRECISION)
         });
 
         // Update level totals (MasterChef pattern)
@@ -249,7 +251,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
         uint256 pending = 0;
         if (block.timestamp >= s.rewardStartTime) {
             uint256 accReward = accRewardPerShare[s.level];
-            pending = (uint256(s.stakedDexy) * accReward / ACC_PRECISION) - s.rewardDebt;
+            pending = Math.mulDiv(s.stakedDexy, accReward, PRECISION) - s.rewardDebt;
         }
 
         uint256 amount = s.stakedDexy;
@@ -309,11 +311,11 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
 
             if (!s.unstaked && block.timestamp >= s.rewardStartTime) {
                 uint256 accReward = accRewardPerShare[s.level];
-                uint256 pending = (uint256(s.stakedDexy) * accReward / ACC_PRECISION) - s.rewardDebt;
+                uint256 pending = Math.mulDiv(s.stakedDexy, accReward, PRECISION) - s.rewardDebt;
 
                 if (pending > 0) {
                     totalPending += pending;
-                    s.rewardDebt = (uint256(s.stakedDexy) * accReward) / ACC_PRECISION;
+                    s.rewardDebt = Math.mulDiv(s.stakedDexy, accReward, PRECISION);
                 }
             }
             unchecked {
@@ -348,7 +350,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
         }
 
         // New rate = (remaining + new) / new duration
-        rewardRate = (remainingRewards + _amount) / _duration;
+        rewardRate = (remainingRewards + _amount * PRECISION) / _duration;
         rewardEndTime = (block.timestamp + _duration).toUint40();
 
         // Interactions
@@ -403,9 +405,9 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
                         uint256 levelBoostedStake =
                             (uint256(levels[i].totalStaked) * levels[i].boostP) / BOOST_PRECISION;
                         // slither-disable-next-line divide-before-multiply
-                        uint256 levelReward = (reward * levelBoostedStake) / totalBoostedStake;
+                        uint256 levelReward = Math.mulDiv(reward, levelBoostedStake, totalBoostedStake);
                         // slither-disable-next-line divide-before-multiply
-                        simAccRewardPerShare[i] += (levelReward * ACC_PRECISION) / levels[i].totalStaked;
+                        simAccRewardPerShare[i] += levelReward / levels[i].totalStaked;
                     }
                 }
             }
@@ -419,7 +421,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
             Stake storage s = stakeInfo[_user][i];
             if (!s.unstaked && block.timestamp >= s.rewardStartTime && s.stakedDexy > 0) {
                 uint256 accReward = simAccRewardPerShare[s.level];
-                total += (uint256(s.stakedDexy) * accReward / ACC_PRECISION) - s.rewardDebt;
+                total += Math.mulDiv(s.stakedDexy, accReward, PRECISION) - s.rewardDebt;
             }
             unchecked {
                 i++;
@@ -460,9 +462,9 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
             if (levels[i].totalStaked > 0) {
                 uint256 levelBoostedStake = (uint256(levels[i].totalStaked) * levels[i].boostP) / BOOST_PRECISION;
                 // slither-disable-next-line divide-before-multiply
-                uint256 levelReward = (reward * levelBoostedStake) / totalBoostedStake;
+                uint256 levelReward = Math.mulDiv(reward, levelBoostedStake, totalBoostedStake);
                 // slither-disable-next-line divide-before-multiply
-                accRewardPerShare[i] += (levelReward * ACC_PRECISION) / levels[i].totalStaked;
+                accRewardPerShare[i] += levelReward / levels[i].totalStaked;
             }
             unchecked {
                 i++;
