@@ -4,50 +4,104 @@ Original contract written at Dexynth (2023-2024). v2 and v2.1 are a later indepe
 
 **Status:** Proof of concept. Not audited. Not deployed.
 
-## 🛡️ Security Audit & Hardening (v2.1 - Jan 2026)
-A comprehensive internal audit and hardening phase was conducted to ensure mathematical correctness and robust security guarantees.
+## Overview
 
-### 1. Invariant Testing & Fuzzing
-- **Stateful Fuzzing Suite**: Implemented a comprehensive invariant testing suite (`test/invariant/`) using Foundry's `Handler` pattern.
-- **Math Consistency Verified**: Detected and fixed a critical rounding error in `totalBoostedStake` calculation (rounding error accumulation).
-- **Solvency Check**: Verified that the contract is always solvent.
+`DexynthStakingV2_1` ([src/DexynthStaking.sol](./src/DexynthStaking.sol)) lets users stake DEXY in one of several lock levels and earn a reward token (`REWARD_TOKEN`, fixed at deployment) that is streamed over time. Each level has a lock period and a reward multiplier. A level's share of the reward stream is proportional to its boosted stake (staked amount times multiplier), and inside a level rewards are split pro rata to the staked amount.
 
-### 2. Reentrancy Protection (CEI + Guard)
-- **Strict CEI Pattern**: Refactored all critical functions (`stake`, `unstake`, `addStakingReward`, `executeMigration`) to strictly follow **Checks-Effects-Interactions**.
-- **Defense in Depth**: Added `nonReentrant` modifiers to minimal functions including admin migrations.
+## Reward distribution model
 
-### 3. Code Quality
-- **Explicit Precisions**: Replaced magic numbers with `ACC_PRECISION` and `BOOST_PRECISION` constants.
-- **Indexed Events**: Added indexing to `address` parameters in migration events.
-- **Loop Optimizations**: Cached array lengths for gas efficiency.
+- **Funding.** `addStakingReward(_amount, _duration)` transfers `_amount` of `REWARD_TOKEN` into the contract and sets a new stream: `rewardRate = (unstreamed remainder of the current period + _amount) / _duration` (integer division) and `rewardEndTime = now + _duration`. The function has no access control.
+- **Streaming.** Rewards are released every second at `rewardRate` until `rewardEndTime`. They are not distributed per epoch.
+- **Split between levels.** On every `stake`, `unstake`, `harvest` and `addStakingReward` the contract updates the pool: the rewards for the elapsed time are split across levels by `levelBoostedStake / totalBoostedStake`, where `levelBoostedStake = level.totalStaked * boostP / 1e10`, and added to the per-level accumulator `accRewardPerShare[level]` (1e18 precision).
+- **Per stake.** A stake's pending reward is `stakedDexy * accRewardPerShare[level] / 1e18 - rewardDebt`. `rewardDebt` is set when the stake is created and updated on harvest.
+- **Epochs.** `epochDuration` (at least one day) is set at deployment. Epochs are only used to compute two timestamps per stake:
+  - `rewardStartTime`: the start of the next epoch. Before it the stake's rewards cannot be harvested and `pendingRewards` does not include them. The stake accrues rewards from the moment it is created, and what accrued before `rewardStartTime` becomes claimable at `rewardStartTime`.
+  - `unlockTime = rewardStartTime + lockingPeriod`. The effective lock is the level's `lockingPeriod` plus the time left until the next epoch starts.
+- **Claiming.** `harvest()` pays the pending rewards of all the caller's stakes that have reached `rewardStartTime`. `unstake(i)` returns the principal of stake `i` and pays that stake's pending rewards.
+- **No stakers.** If `totalBoostedStake` is zero when the pool is updated, the elapsed time is skipped. The rewards streamed during that time are not assigned to anyone and stay in the contract.
 
-## 🚀 Major Refactoring & Optimization (v2 - Dec 2025)
+## Staking levels
 
-The staking system has undergone a complete architectural overhaul to transition from an O(N) epoch-looping model to an **O(1) MasterChef-style** accumulator model. This ensures constant gas costs regardless of the number of epochs or stakes.
+Levels are passed to the constructor as a `Level[]` array and cannot be changed afterwards. The constructor enforces:
 
-### ⚡️ Gas Optimizations & Refactoring
-- **O(1) MasterChef Rewards**: Replaced heavy loops with `accRewardPerShare` accumulators. Gas usage is now constant (< 200k) even after 10 years of staking.
-- **Variable Packaging**: Optimized data types (e.g., `uint40` for timestamps, `uint32` for epochs) and reordered state variables/struct members from smallest to largest to pack them into fewer storage slots.
-- **Custom Errors**: Replaced string revert messages with Custom Errors (e.g., `error StakeStillLocked()`) to save deployment and runtime gas.
-- **Explicit Types**: Standardized usage of `uint256` instead of implicit `uint` for clarity and consistency.
-- **Visibility Optimization**: Refactored public functions to `external` (`stake`, `unstake`, `harvest`, etc.) to reduce gas costs on function calls.
-- **Loop Optimization**: Implemented `unchecked` arithmetic in for-loops and epoch math to save gas on increment operations.
-- **Generic Token Support**: Renamed `USDT` to `REWARD_TOKEN` to make the contract asset-agnostic.
-- **SafeCast**: Integrated OpenZeppelin's `SafeCast` for all type conversions to prevent silent overflows.
-- **NatSpec**: 100% documentation coverage.
+- at least one level;
+- `lockingPeriod` strictly increasing from one level to the next;
+- `boostP` strictly increasing from one level to the next;
+- the sum of all `boostP` values equals `numberOfLevels * 1e10`, so the average multiplier is 1.0x (`boostP = 1e10` means 1.0x).
 
-### 🔐 Security & Code Quality Improvements (Dec 2025)
-- **Timelock Migration**: Replaced instant `migrateContract()` with a 30-day timelock system (`requestMigration` → `executeMigration`).
-- **Dynamic Immutable Levels**: Refactored from fixed 5-level array to dynamic `Level[]` array set at deployment.
-- **Access Control**: Replaced custom `onlyGov` with OpenZeppelin's `onlyOwner`.
+No other bounds are checked (for example, there is no maximum lock period, and level 0 may have a `lockingPeriod` or `boostP` of 0). Stakes select a level with a `uint8` index.
 
-### 🧹 Code Cleanup
-- Removed deprecated `lastEpochHarvested` field from `User` struct.
-- Removed deprecated `EpochClosed` event.
-- Removed unused legacy mappings (`sEpoch`, `sStakedTokensPerWallet...`).
+**Example configuration.** This is the configuration used by the tests and by [script/DeployDexynthStaking.s.sol](./script/DeployDexynthStaking.s.sol), with a 15 day epoch (`1296000` seconds). It is an example, not a property of the contract.
 
-### 📊 Gas Performance (Optimized v2.1 - Jan 2026)
-Current gas consumption benchmarks showing the evolution from v1 legacy to v2.1 hardened:
+| Level | `lockingPeriod` (s) | Lock | `boostP` | Multiplier |
+|-------|---------------------|----------|-------------|------------|
+| 0 | 2592000 | 30 days | 6500000000 | 0.65x |
+| 1 | 7776000 | 90 days | 8500000000 | 0.85x |
+| 2 | 15552000 | 180 days | 10000000000 | 1.00x |
+| 3 | 31536000 | 365 days | 11500000000 | 1.15x |
+| 4 | 62208000 | 720 days | 13500000000 | 1.35x |
+
+## Tokens
+
+- `DEXY` and `REWARD_TOKEN` are immutable addresses set at deployment. The deploy script reads the reward token from the `USDT_ADDRESS` environment variable.
+- The contract never reads `decimals()` and does not assume a number of decimals for either token. Amounts are raw token units.
+- The test tokens (`src/DEXY.sol`, `src/RewardToken.sol`) have 18 decimals. No test uses a reward token with fewer decimals.
+
+## Core functions
+
+```solidity
+function stake(uint256 _amount, uint8 _level) external;
+function unstake(uint64 _stakeIndex) external;
+function harvest() external;
+function addStakingReward(uint256 _amount, uint256 _duration) external;
+function pendingRewards(address _user) external view returns (uint256);
+
+// Owner only
+function requestMigration(address _newContract) external;
+function cancelMigration() external;
+function executeMigration() external;
+```
+
+- `stake`: `_amount` in DEXY units, `_level` from 0 to `getNumberOfLevels() - 1`. Every call creates a new stake with its own index.
+- `unstake`: `_stakeIndex` is the index of one of the caller's stakes. Reverts while the stake is locked.
+- `harvest`: claims the rewards of all the caller's stakes. Reverts if the caller has nothing staked or nothing to claim.
+- `addStakingReward`: `_amount` in `REWARD_TOKEN` units, `_duration` in seconds. Callable by any address.
+- Views: `getLevels()`, `getNumberOfLevels()`, `getCurrentEpochIndex()`, `pendingRewards(address)`.
+
+## Changelog
+
+### v2.1 (Jan 2026): internal review
+
+- **Invariant suite.** Added a stateful fuzzing suite (`test/invariant/`) based on a `Handler` contract.
+- **`totalBoostedStake` rounding fix.** `totalBoostedStake` is now recomputed from the level totals on every stake and unstake instead of being updated incrementally (see Review notes).
+- **Checks-Effects-Interactions.** `stake`, `unstake`, `addStakingReward` and `executeMigration` now update state before any token transfer. `harvest` already did.
+- **Reentrancy guard.** `nonReentrant` was added to `executeMigration`. `stake`, `unstake`, `harvest` and `addStakingReward` already had it, so every function that transfers tokens is now guarded.
+- **Precision constants.** Replaced the literals with `ACC_PRECISION` (1e18) and `BOOST_PRECISION` (1e10).
+- **Indexed events.** The address parameters of the migration events are indexed.
+- **Loops.** Array lengths are cached in the reward and level loops.
+
+### v2 (Dec 2025): O(1) accumulator and cleanup
+
+The loop-based reward logic, which iterated over epochs, was replaced with a MasterChef-style accumulator (`accRewardPerShare` per level). The gas cost of `stake`, `unstake` and `harvest` no longer depends on the number of elapsed epochs. It still depends on the number of levels, and `harvest` also depends on the number of stakes the caller has created (it loops over all of them, including unstaked ones).
+
+- **Accumulator.** `testO1GasPerformance` checks that a `harvest` with one stake after 100 epochs (about 4.1 years with 15 day epochs) uses less than 250,000 gas.
+- **Variable packing.** Timestamps use `uint40` and the epoch index `uint32`. `migrationRequestTime`, `lastRewardTime` and `rewardEndTime` share one storage slot.
+- **Custom errors.** String revert messages were replaced with custom errors (for example `StakeStillLocked()`).
+- **Explicit types.** `uint256` instead of `uint`.
+- **Visibility.** `stake`, `unstake`, `harvest` and `addStakingReward` are `external`.
+- **Unchecked loop increments.** Most loops increment their counter inside `unchecked`.
+- **Reward token rename.** `USDT` was renamed to `REWARD_TOKEN`. The contract takes any ERC20 address, with the limitations listed below.
+- **SafeCast.** OpenZeppelin `SafeCast` is used for the narrowing conversions of amounts, rewards, `epochDuration` and `rewardEndTime`. Casts of `block.timestamp`, the epoch index and the number of levels use plain casts.
+- **NatSpec.** External and public functions, structs, events and the constructor have NatSpec. Custom errors and public state variables do not.
+- **Migration timelock.** The instant `migrateContract()` was replaced with `requestMigration`, `cancelMigration` and `executeMigration` with a 30 day delay.
+- **Immutable levels.** The fixed five-level array and its setter were replaced with a `Level[]` array set in the constructor.
+- **Access control.** The custom `onlyGov` modifier was replaced with OpenZeppelin `onlyOwner`.
+- **Cleanup.** Removed the `lastEpochHarvested` field, the `EpochClosed` event and the legacy per-epoch mappings.
+- **Tooling.** Migrated from Hardhat to Foundry.
+
+## Gas Performance (Optimized v2.1 - Jan 2026)
+
+The figures in this table are carried over from the previous version of this README. They have not been re-measured in this revision, and the v1 column does not state the scenario it was measured in.
 
 | Operation | Original Gas (v1) | V2 Gas (Dec) | **Hardened Gas (v2.1)** | Total Improvement (v1 → v2.1) |
 | :--- | :--- | :--- | :--- | :--- |
@@ -55,147 +109,68 @@ Current gas consumption benchmarks showing the evolution from v1 legacy to v2.1 
 | **Unstake** | > 3M+ (linear) | ~95,642 | **~95,083** | **> 96%** 📉 |
 | **Harvest** | > 500k+ (linear) | ~166,370 | **~139,235** | **> 72%** 📉 |
 
-> *Note: The slight gas increase in `stake` compared to v2 (+4%) is a deliberate trade-off to guarantee mathematical consistency and prevent rounding error accumulation.*
+> *Note: In v2.1, `stake` recomputes `totalBoostedStake` from the level totals instead of updating it incrementally (see Review notes).*
 
-### 🛠️ Running Tests
+To measure gas yourself:
+
 ```bash
-# Run unit tests
+forge test --gas-report
+```
+
+## Testing
+
+```bash
+# Unit, fuzz and invariant tests
 forge test
 
-# Run invariant tests (stateful fuzzing)
+# Invariant tests only (stateful fuzzing)
 forge test --match-contract Invariant
 ```
 
-### 🧪 Advanced Testing Strategy
-- **Invariant Tests**: Validates core protocol invariants (solvency, level consistency vs global) using randomized actor sequences (`Handler.sol`).
-- **Fuzzing Tests**: Property-based testing using Foundry's Fuzzing capabilities.
-- **State-Dependent Fuzzing**: Created complex fuzzing scenarios that simulate time passage and state changes.
-- **Tooling Migration**: Hardhat → Foundry complete.
+`forge test` runs 49 tests: 39 unit and fuzz tests in [test/DexynthStaking.t.sol](./test/DexynthStaking.t.sol) and 10 invariant functions in [test/invariant/Invariant.t.sol](./test/invariant/Invariant.t.sol). Fuzz tests use Foundry's default of 256 runs. The invariant settings in `foundry.toml` are `runs = 256`, `depth = 32` and `fail_on_revert = false`.
 
----
+### Unit and fuzz tests
 
-## Overview
+- **Staking:** staking at each level of the example configuration, balances, stake data, `rewardStartTime` and `unlockTime` alignment with the next epoch, zero amount and invalid level reverts.
+- **Unstaking:** principal returned after the lock, `StakeStillLocked` before it, `AlreadyUnstaked` on a second call.
+- **Rewards:** rewards are split by level multiplier (the level 4 staker receives more than 1.5x the level 0 staker for the same amount), `pendingRewards` is zero before `rewardStartTime`, harvesting pays rewards and `NoRewardsToHarvest` is raised when there is nothing to claim.
+- **Migration:** timelock, cancellation, owner-only `requestMigration`, and `executeMigration` moving the full DEXY and reward token balances.
+- **Gas:** `testO1GasPerformance` (see Changelog).
 
-**Dexynth Multilevel Real Yield Staking** is a staking smart contract designed to distribute **Real Yield** in the form of USDT. Users stake their DEXY tokens and choose a lock-up period (level), which determines their reward multiplier. The longer the lock, the higher the share of the rewards pool they receive.
+### Invariant tests
 
-To ensure the correctness of the staking model and reward logic, the design was first created in an **Excel spreadsheet**, where all calculations were tested under various scenarios. This spreadsheet provided a clear blueprint for the contract implementation and was later validated through a comprehensive **unit test suite** to compare the expected and actual values generated by the contract.
+The handler has 10 actors and can call `stake`, `unstake`, `harvest`, `addStakingReward` (as the owner), `advanceTime` (1 hour to 90 days) and `advanceOneEpoch`. `unstake` and `harvest` return early without calling the contract when the selected stake is locked or there is nothing to claim.
 
-## Key Features
+| Invariant | What it checks |
+|-----------|----------------|
+| `invariant_dexyStakingSolvency` | The contract's DEXY balance is at least the handler's running total of staked DEXY. |
+| `invariant_rewardsSolvency` | The handler's total of rewards harvested does not exceed its total of rewards added. |
+| `invariant_levelTotalConsistency` | Each `level.totalStaked` equals the handler's per-level total, and their sum equals the global total. |
+| `invariant_boostedStakeConsistency` | `totalBoostedStake` equals the sum of `totalStaked * boostP / 1e10` over all levels. |
+| `invariant_userStakeConsistency` | Each actor's `totalStakedDexy` equals the sum of their open stakes. |
+| `invariant_lastRewardTimeNotFuture` | `lastRewardTime <= block.timestamp`. |
+| `invariant_unlockTimeAfterRewardStart` | `unlockTime >= rewardStartTime` for every stake. |
+| `invariant_levelsImmutable` | The number of levels is still 5. |
+| `invariant_boostOrderPreserved` | `boostP` and `lockingPeriod` are still strictly increasing. |
+| `invariant_callSummary` | Prints the handler call counts. It asserts nothing. |
 
-- **Stake and Unstake**: Users can lock $DEXY tokens in the contract and withdraw them after the lock period ends.  
-- **Reward Scaling**: Rewards increase based on staking level, incentivizing longer lock durations with higher returns.  
-- **Epoch-Based Distribution**: Rewards and staking mechanics are organized into distinct time intervals (epochs).  
-- **Administrative Control**: Administrators can add rewards to the pool and adjust contract parameters.
+With the configuration above, the invariant suite found no violations across 256 runs of depth 32. No invariant checks that the reward token balance covers the rewards accrued to open stakes plus the rewards scheduled but not yet streamed.
 
----
+## Security measures
 
-## Staking Levels
+- **Reentrancy:** OpenZeppelin `ReentrancyGuard` on every function that transfers tokens.
+- **Token transfers:** OpenZeppelin `SafeERC20`.
+- **Access control:** OpenZeppelin `Ownable` (single owner) on the three migration functions. `addStakingReward` is not restricted.
+- **Migration delay:** 30 days between `requestMigration` and `executeMigration`.
 
-The contract offers five staking levels, each with different lock periods and reward boosts:
+## Original design model (Excel)
 
-| **Level** | **Lock Period** | **Multiplier** |
-|-----------|-----------------|----------------|
-| 0         | 30 days         | 0.65x          |
-| 1         | 90 days         | 0.85x          |
-| 2         | 180 days        | 1.00x          |
-| 3         | 1 year          | 1.15x          |
-| 4         | 2 years         | 1.35x          |
+The original Dexynth design was modelled in a spreadsheet before it was implemented. The spreadsheet models the original epoch-based reward logic: the rewards of each epoch are split across levels by boosted stake, with a per-user breakdown for three users.
 
----
-
-## Core Methods
-
-### **Staking**
-Allows users to lock $DEXY tokens in a specific staking level.  
-```solidity
-function stake(uint256 _amount, uint8 _level) external;
-```
-- `_amount`: Number of $DEXY tokens to stake (18 decimals).  
-- `_level`: Desired staking level (0-4).  
-
-### **Unstaking**
-Enables users to withdraw their staked tokens after the lock period ends.  
-```solidity
-function unstake(uint64 _stakeIndex) external;
-```
-- `_stakeIndex`: Index of the user's staking position.
-
-### **Harvesting Rewards**
-Lets users claim accumulated $USDT rewards.  
-```solidity
-function harvest() external;
-```
-### **Adding Rewards**  
-Allows administrators to deposit $USDT rewards into the staking pool.  
-```solidity
-function addStakingReward(uint256 _amount, uint256 _duration) external;
-```
-- `_amount`: Amount of $USDT to add to the pool (18 decimals).
-- `_duration`: Duration in seconds over which to distribute the rewards.
-
----
-
-## Validation Process: From Excel to Unit Tests  
-
-### **Excel Design**  
-The design of the staking contract was first created in an Excel model to simulate and confirm the expected mechanics of the staking system. This allowed for:  
-- Simulating rewards for various staking levels and lock periods.  
-- Testing scenarios with multiple users staking and unstaking simultaneously.  
-- Ensuring token distribution adhered to predefined parameters.  
-
-The Excel model served as a reference for comparison with unit-tests and on-chain results, helping ensure the contract logic was implemented correctly.
+The spreadsheet file is not part of this repository (it is listed in `.gitignore`). No test in the current suite compares contract results against spreadsheet values. v2 streams rewards per second instead of per epoch, so the spreadsheet describes the v1 distribution, not the current one.
 
 ![Excel model 1](./images/staking_excel_1.png)
 
 ![Excel model 2](./images/staking_excel_2.png)
 
-![Excel model 1](./images/staking_excel_3.png)
-
----
-
-### **Unit Tests & Fuzzing**  
-After validating the logic in Excel, unit tests were created to replicate and rigorously verify the functionality on-chain. The tests, found in [DexynthStaking.t.sol](./test/DexynthStaking.t.sol), focus on critical aspects of the contract, including:
-
-1. **Staking Functionality**  
-   - Ensures users can stake $DEXY tokens at any of the defined levels (0-4).  
-   - Validates proper updates to staking balances, timestamps, and lock periods.  
-
-2. **Unstaking Behavior**  
-   - Confirms users can only unstake their tokens after the defined lock period.  
-   - Verifies that early unstaking attempts are correctly rejected.  
-
-3. **Reward Accrual and Distribution**  
-   - Matches reward calculations to the Excel model's projections.  
-   - Tests for the correct behavior when the reward pool is depleted.
-
-4. **Harvesting Rewards**  
-   - Ensures users can claim rewards without unstaking their tokens.  
-   - Validates that rewards do not exceed the available balance in the reward pool.
-
-5. **Administrative Functions**  
-   - Confirms that only authorized accounts can add rewards or update parameters.  
-   - Prevents unauthorized access to sensitive functions.
-
-6. **Edge Cases**  
-   - Prevents staking of zero tokens.  
-   - Handles cases where rewards have been exhausted gracefully.
-
-7. **Invariant Testing (Stateful Fuzzing)**
-   - Validates solvency guarantees (contract always has enough tokens for liabilities).
-   - Ensures mathematical consistency of staking levels vs global totals.
-   - Verifies system stability under randomized chaotic inputs (`Handler.sol`) over simulated time epochs.
-
----
-
-## Security Considerations  
-
-The contract implements various security features to protect against vulnerabilities:  
-- **Reentrancy Protection**: The `ReentrancyGuard` modifier is used to prevent reentrancy attacks.  
-- **Safe Transfers**: The `SafeERC20` library ensures secure interactions with ERC20 tokens.  
-- **Access Control**: Administrative actions are restricted to designated roles, mitigating unauthorized changes.
-
----
-
-## Additional Notes  
-
-This contract has been validated through multiple layers of testing and simulation. Continuous auditing and monitoring are advised to ensure robustness as the system evolves.
+![Excel model 3](./images/staking_excel_3.png)
