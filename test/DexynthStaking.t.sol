@@ -83,45 +83,32 @@ contract DexynthStakingTest is Test {
     }
 
     function testMigrationWithTimelock() public {
-        // Setup some balances
-        staking.addStakingReward(1000 ether, 30 days); // USDT with 30 day duration
+        // 1000 reward tokens streamed over 60 days, the migration happens halfway
+        staking.addStakingReward(1000 ether, 60 days);
 
         vm.prank(user1);
-        staking.stake(500 ether, 0); // DEXY
+        staking.stake(500 ether, 0);
 
         address newContract = address(0x999);
-
-        // Request migration
         staking.requestMigration(newContract);
-
-        // Verify state
         assertEq(staking.pendingMigrationAddress(), newContract);
-        assertGt(staking.migrationRequestTime(), 0);
+        assertEq(staking.migrationRequestTime(), block.timestamp);
 
-        // Try to execute before timelock - should fail
         vm.expectRevert(DexynthStakingV2_1.TimelockStillActive.selector);
         staking.executeMigration();
 
-        // Wait for timelock (30 days)
         vm.warp(block.timestamp + 30 days + 1);
+        uint256 stakingDexyBefore = dexy.balanceOf(address(staking));
+        uint256 expectedMoved = (uint256(staking.rewardEndTime()) - block.timestamp) * staking.rewardRate() / 1e36;
 
-        uint256 rewardTokenBalBefore = rewardToken.balanceOf(newContract);
-        uint256 dexyBalBefore = dexy.balanceOf(newContract);
-
-        // Execute migration
         staking.executeMigration();
 
-        uint256 rewardTokenBalAfter = rewardToken.balanceOf(newContract);
-        uint256 dexyBalAfter = dexy.balanceOf(newContract);
-
-        assertEq(rewardTokenBalAfter - rewardTokenBalBefore, 1000 ether);
-        // In setUp, we transferred 10_000_000 ether DEXY to staking contract.
-        // Plus user1 staked 500 ether.
-        // Total DEXY in contract = 10_000_000 + 500 = 10_000_500 ether.
-        assertEq(dexyBalAfter - dexyBalBefore, 10_000_500 ether);
-
-        assertEq(rewardToken.balanceOf(address(staking)), 0);
-        assertEq(dexy.balanceOf(address(staking)), 0);
+        // Only the unstreamed rewards move, DEXY principal stays
+        assertEq(rewardToken.balanceOf(newContract), expectedMoved);
+        assertEq(dexy.balanceOf(newContract), 0);
+        assertEq(dexy.balanceOf(address(staking)), stakingDexyBefore);
+        assertTrue(staking.migrated());
+        assertEq(staking.rewardRate(), 0);
     }
 
     function testMigrationCancel() public {

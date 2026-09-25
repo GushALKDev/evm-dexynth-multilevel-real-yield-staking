@@ -26,14 +26,17 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
 
     // Constants addresses
     uint32 public constant MIGRATION_DELAY = 30 days;
+    // After the delay a request can be executed for this long, then it expires
+    uint32 public constant MIGRATION_WINDOW = 7 days;
     // Scale of rewardRate and accRewardPerShare, high enough that 6-decimal reward tokens do not truncate to zero
     uint256 private constant PRECISION = 1e36;
     uint256 private constant BOOST_PRECISION = 1e10;
 
     // Slot 0 is Ownable._owner and slot 1 is ReentrancyGuard._status
     uint32 public migrationRequestTime; //      4 bytes -┐
-    uint40 public lastRewardTime; //            5 bytes  │  Slot 2 (14/32)
-    uint40 public rewardEndTime; //             5 bytes -┘
+    uint40 public lastRewardTime; //            5 bytes  │  Slot 2 (15/32)
+    uint40 public rewardEndTime; //             5 bytes  │
+    bool public migrated; //                    1 byte  -┘
     address public pendingMigrationAddress; // 20 bytes -── Slot 3 (20/32)
     uint256 public rewardRate; //              32 bytes -── Slot 4 (full)
     uint256 public totalBoostedStake; //       32 bytes -── Slot 5 (full)
@@ -110,6 +113,8 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
     error NoLevels();
     error ZeroDuration();
     error ZeroBoostedStake();
+    error MigrationExpired();
+    error AlreadyMigrated();
 
     // Events
 
@@ -140,13 +145,6 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
      * @param newContractAddress Destination address
      */
     event RewardTokenMigrationSuccess(uint256 amount, address indexed newContractAddress);
-
-    /**
-     * @notice Emitted when DEXY liquidity is migrated
-     * @param amount Amount of tokens transferred
-     * @param newContractAddress Destination address
-     */
-    event DEXYMigrationSuccess(uint256 amount, address indexed newContractAddress);
 
     /**
      * @notice Emitted when migration is requested
@@ -203,6 +201,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
      * @param _level Level index (0 to numLevels-1)
      */
     function stake(uint256 _amount, uint8 _level) external nonReentrant {
+        if (migrated) revert AlreadyMigrated();
         if (_amount == 0) revert WrongParams();
         if (_level >= levels.length) revert WrongParams();
         if ((_amount * levels[_level].boostP) / BOOST_PRECISION == 0) revert ZeroBoostedStake();
@@ -246,7 +245,8 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
         Stake storage s = stakeInfo[msg.sender][_stakeIndex];
 
         if (s.unstaked) revert AlreadyUnstaked();
-        if (block.timestamp < s.unlockTime) revert StakeStillLocked();
+        // After a migration principal can always be withdrawn
+        if (!migrated && block.timestamp < s.unlockTime) revert StakeStillLocked();
 
         _updatePool();
 
@@ -341,6 +341,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
      * @param _duration Duration over which to distribute rewards
      */
     function addStakingReward(uint256 _amount, uint256 _duration) external onlyOwner nonReentrant {
+        if (migrated) revert AlreadyMigrated();
         if (_duration == 0) revert ZeroDuration();
 
         _updatePool();
@@ -537,8 +538,12 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
      * @param _newContract Address of the new contract
      */
     function requestMigration(address _newContract) external onlyOwner {
+        if (migrated) revert AlreadyMigrated();
         if (_newContract == address(0)) revert AddressZero();
-        if (migrationRequestTime != 0) revert MigrationAlreadyPending();
+        // An expired request does not block a new one
+        if (migrationRequestTime != 0 && block.timestamp <= migrationRequestTime + MIGRATION_DELAY + MIGRATION_WINDOW) {
+            revert MigrationAlreadyPending();
+        }
         pendingMigrationAddress = _newContract;
         migrationRequestTime = uint32(block.timestamp);
         emit MigrationRequested(_newContract, migrationRequestTime + MIGRATION_DELAY);
@@ -560,21 +565,28 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
     function executeMigration() external nonReentrant onlyOwner {
         if (migrationRequestTime == 0) revert NoMigrationRequested();
         if (block.timestamp < migrationRequestTime + MIGRATION_DELAY) revert TimelockStillActive();
+        if (block.timestamp > migrationRequestTime + MIGRATION_DELAY + MIGRATION_WINDOW) revert MigrationExpired();
 
-        uint256 usdtBalance = IERC20(REWARD_TOKEN).balanceOf(address(this));
-        uint256 dexyBalance = IERC20(DEXY).balanceOf(address(this));
+        // Rewards streamed up to now stay with the stakers
+        _updatePool();
+
+        uint256 remainingScaled = unallocatedRewards;
+        if (rewardEndTime > block.timestamp) remainingScaled += (rewardEndTime - block.timestamp) * rewardRate;
+        uint256 amount = remainingScaled / PRECISION;
         address migrationAddress = pendingMigrationAddress;
 
-        // Effects
+        // Effects: stop the stream, staked principal and accrued rewards are not touched
+        rewardRate = 0;
+        rewardEndTime = uint40(block.timestamp);
+        unallocatedRewards = 0;
+        migrated = true;
         pendingMigrationAddress = address(0);
         migrationRequestTime = 0;
 
         // Interactions
-        IERC20(REWARD_TOKEN).safeTransfer(migrationAddress, usdtBalance);
-        IERC20(DEXY).safeTransfer(migrationAddress, dexyBalance);
+        IERC20(REWARD_TOKEN).safeTransfer(migrationAddress, amount);
 
-        emit RewardTokenMigrationSuccess(usdtBalance, migrationAddress);
-        emit DEXYMigrationSuccess(dexyBalance, migrationAddress);
+        emit RewardTokenMigrationSuccess(amount, migrationAddress);
     }
 
     /**
