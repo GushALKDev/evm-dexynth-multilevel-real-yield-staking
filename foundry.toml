@@ -28,6 +28,10 @@ test = "gas"
 
 [invariant]
 runs = 256
+# 64 calls per run: a migration needs a request (discarded 7 times out of 8), the 30 day delay and an execution,
+# and the runs that migrate still need calls before it for stake, unstake and harvest to run. At 64 about 4 in 10
+# runs execute a migration and unstake runs in about 6,000 of the 82,240 handler calls of one suite run
+# (1,285 runs of 64 calls, counts logged to cache/invariant-stats-*.txt)
 depth = 64
 # The handler asserts every expected revert with vm.expectRevert, so any other revert is a failure
 fail_on_revert = true
