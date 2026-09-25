@@ -25,6 +25,8 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
     uint32 public immutable epochDuration;
 
     // Constants addresses
+    // Upper bound on the number of levels, keeps every per-level loop short and levels addressable by uint8
+    uint256 public constant MAX_LEVELS = 10;
     uint32 public constant MIGRATION_DELAY = 30 days;
     // After the delay a request can be executed for this long, then it expires
     uint32 public constant MIGRATION_WINDOW = 7 days;
@@ -117,6 +119,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
     error AlreadyMigrated();
     error StakeNotFound();
     error SameToken();
+    error TooManyLevels();
 
     // Events
 
@@ -178,6 +181,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
         // Checking minimum epoch duration
         if (_epochDuration < 86400) revert MinimumOneDay();
         if (_levels.length == 0) revert NoLevels();
+        if (_levels.length > MAX_LEVELS) revert TooManyLevels();
 
         // Setting epochDuration and genesis timestamp
         epochDuration = _epochDuration.toUint32();
@@ -186,7 +190,7 @@ contract DexynthStakingV2_1 is Ownable, ReentrancyGuard {
 
         // Setting levels data
         _checkboostP(_levels);
-        for (uint8 i = 0; i < _levels.length;) {
+        for (uint256 i = 0; i < _levels.length;) {
             levels.push(_levels[i]);
             unchecked {
                 i++;
