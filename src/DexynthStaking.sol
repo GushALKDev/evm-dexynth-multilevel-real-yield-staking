@@ -5,7 +5,7 @@ import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/token/ERC20/utils/SafeERC20.sol";
 import {SafeCast} from "@openzeppelin/utils/math/SafeCast.sol";
 import {Math} from "@openzeppelin/utils/math/Math.sol";
-import {Ownable} from "@openzeppelin/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/access/Ownable2Step.sol";
 import {ReentrancyGuard} from "@openzeppelin/security/ReentrancyGuard.sol";
 
 /**
@@ -29,7 +29,7 @@ import {ReentrancyGuard} from "@openzeppelin/security/ReentrancyGuard.sol";
  *      - A stake's amount and its boosted amount (amount * boostP / 1e10) must fit in uint128, otherwise stake
  *        reverts.
  */
-contract DexynthStakingV2_2 is Ownable, ReentrancyGuard {
+contract DexynthStakingV2_2 is Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
 
@@ -150,7 +150,7 @@ contract DexynthStakingV2_2 is Ownable, ReentrancyGuard {
                                 STORAGE
     //////////////////////////////////////////////////////////////*/
 
-    // Slot 0 is Ownable._owner and slot 1 is ReentrancyGuard._status
+    // Slot 0 is Ownable._owner, slot 1 is Ownable2Step._pendingOwner and slot 2 is ReentrancyGuard._status
     /**
      * @notice Timestamp of the pending migration request, 0 when there is none
      */
@@ -162,7 +162,7 @@ contract DexynthStakingV2_2 is Ownable, ReentrancyGuard {
     /**
      * @notice End of the current reward stream
      */
-    uint40 public rewardEndTime; //              5 bytes  │  Slot 2 (full)
+    uint40 public rewardEndTime; //              5 bytes  │  Slot 3 (full)
     /**
      * @notice True once executeMigration has run
      */
@@ -174,23 +174,23 @@ contract DexynthStakingV2_2 is Ownable, ReentrancyGuard {
     /**
      * @notice Destination of the pending migration request
      */
-    address public pendingMigrationAddress; //  20 bytes -── Slot 3 (20/32)
+    address public pendingMigrationAddress; //  20 bytes -── Slot 4 (20/32)
     /**
      * @notice Reward token units streamed per second, scaled by 1e36
      */
-    uint256 public rewardRate; //               32 bytes -── Slot 4 (full)
+    uint256 public rewardRate; //               32 bytes -── Slot 5 (full)
     /**
      * @notice Sum of the boosted amounts of all open stakes
      */
-    uint256 public totalBoostedStake; //        32 bytes -── Slot 5 (full)
+    uint256 public totalBoostedStake; //        32 bytes -── Slot 6 (full)
     /**
      * @notice Rewards streamed while totalBoostedStake was zero, scaled by 1e36, rolled into the next stream
      */
-    uint256 public unallocatedRewards; //       32 bytes -── Slot 6 (full)
+    uint256 public unallocatedRewards; //       32 bytes -── Slot 7 (full)
     /**
      * @notice Rewards per boosted unit accumulated since deployment, scaled by 1e36
      */
-    uint256 public accRewardPerBoostedShare; // 32 bytes -── Slot 7 (full)
+    uint256 public accRewardPerBoostedShare; // 32 bytes -── Slot 8 (full)
 
     /**
      * @notice Level configuration and totals, fixed length set in the constructor
@@ -372,6 +372,11 @@ contract DexynthStakingV2_2 is Ownable, ReentrancyGuard {
      */
     error FundingCapExceeded();
 
+    /**
+     * @notice renounceOwnership is disabled, ownership can only move to another address through Ownable2Step
+     */
+    error RenounceOwnershipDisabled();
+
     /*//////////////////////////////////////////////////////////////
                               CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
@@ -503,6 +508,13 @@ contract DexynthStakingV2_2 is Ownable, ReentrancyGuard {
     /*//////////////////////////////////////////////////////////////
                             OWNER FUNCTIONS
     //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Disabled: without an owner the stream could never be funded again and no migration could run
+     */
+    function renounceOwnership() public view override onlyOwner {
+        revert RenounceOwnershipDisabled();
+    }
 
     /**
      * @notice Funds the stream and restarts it over a new duration
