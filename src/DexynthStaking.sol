@@ -221,16 +221,20 @@ contract DexynthStakingV2_2 is Ownable, ReentrancyGuard {
     /**
      * @notice Emitted when a user stakes DEXY
      * @param user Owner of the new stake
+     * @param stakeIndex Index of the new stake among the user's stakes
+     * @param level Level of the new stake
      * @param amount Amount of DEXY staked
      */
-    event DEXYStaked(address indexed user, uint256 amount);
+    event DEXYStaked(address indexed user, uint64 indexed stakeIndex, uint8 indexed level, uint256 amount);
 
     /**
      * @notice Emitted when a user withdraws the principal of a stake
      * @param user Owner of the stake
+     * @param stakeIndex Index of the withdrawn stake
+     * @param level Level of the withdrawn stake
      * @param amount Amount of DEXY returned
      */
-    event DEXYUnstaked(address indexed user, uint256 amount);
+    event DEXYUnstaked(address indexed user, uint64 indexed stakeIndex, uint8 indexed level, uint256 amount);
 
     /**
      * @notice Emitted when the owner funds or reschedules the reward stream
@@ -425,7 +429,8 @@ contract DexynthStakingV2_2 is Ownable, ReentrancyGuard {
         _settle(user);
 
         uint40 unlockTime = (_nextEpochStart() + level.lockingPeriod).toUint40();
-        stakeInfo[msg.sender][user.stakeCount] = Stake({
+        uint64 stakeIndex = user.stakeCount;
+        stakeInfo[msg.sender][stakeIndex] = Stake({
             unstaked: false,
             level: _level,
             timestamp: block.timestamp.toUint40(),
@@ -433,7 +438,7 @@ contract DexynthStakingV2_2 is Ownable, ReentrancyGuard {
             stakedDexy: amount,
             boostedAmount: boosted
         });
-        user.stakeCount++;
+        user.stakeCount = stakeIndex + 1;
         user.totalStakedDexy += amount;
         user.boostedBalance += boosted;
         level.totalStaked += amount;
@@ -441,7 +446,7 @@ contract DexynthStakingV2_2 is Ownable, ReentrancyGuard {
 
         IERC20(DEXY).safeTransferFrom(msg.sender, address(this), _amount);
 
-        emit DEXYStaked(msg.sender, _amount);
+        emit DEXYStaked(msg.sender, stakeIndex, _level, _amount);
     }
 
     /**
@@ -461,10 +466,11 @@ contract DexynthStakingV2_2 is Ownable, ReentrancyGuard {
 
         uint128 amount = s.stakedDexy;
         uint128 boosted = s.boostedAmount;
+        uint8 level = s.level;
         s.unstaked = true;
         user.totalStakedDexy -= amount;
         user.boostedBalance -= boosted;
-        levels[s.level].totalStaked -= amount;
+        levels[level].totalStaked -= amount;
         totalBoostedStake -= boosted;
         uint256 rewards = _takeStoredRewards(user);
 
@@ -474,7 +480,7 @@ contract DexynthStakingV2_2 is Ownable, ReentrancyGuard {
         }
         IERC20(DEXY).safeTransfer(msg.sender, amount);
 
-        emit DEXYUnstaked(msg.sender, amount);
+        emit DEXYUnstaked(msg.sender, _stakeIndex, level, amount);
     }
 
     /**
