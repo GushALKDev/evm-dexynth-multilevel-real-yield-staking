@@ -218,7 +218,7 @@ In v1, `harvest` and `unstake` loop over every level for every epoch since the u
 
 ## Review notes
 
-One entry per finding of the round 1 review and of this round. Each regression test was run against the code before its fix and failed.
+One entry per finding of the round 1 review and of this round. The tests of each finding were run against the code before its fix, and the ones that encode the fixed behaviour failed there.
 
 ### Permissionless `addStakingReward`
 
