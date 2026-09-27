@@ -10,7 +10,8 @@ import {Handler} from "./Handler.sol";
 
 /**
  * @title DexynthStakingV2_2 invariant tests
- * @notice Solvency, conservation and accounting invariants, run with an 18-decimal and a 6-decimal reward token
+ * @notice Solvency, conservation and accounting invariants. Two campaigns (normal operation and migration), each
+ *         run with an 18-decimal and a 6-decimal reward token
  */
 abstract contract InvariantBase is StdInvariant, Test {
     DexynthStakingV2_2 internal staking;
@@ -20,7 +21,7 @@ abstract contract InvariantBase is StdInvariant, Test {
 
     string internal statsFile;
 
-    function _setUp(uint8 _rewardDecimals) internal {
+    function _setUp(uint8 _rewardDecimals, bool _withMigration) internal {
         vm.warp(2_000_000_000);
         dexy = new MockERC20("Dexy Token", "DEXY", 18);
         reward = new MockERC20("Reward Token", "RWD", _rewardDecimals);
@@ -36,18 +37,21 @@ abstract contract InvariantBase is StdInvariant, Test {
         handler = new Handler(staking, dexy, reward);
         targetContract(address(handler));
 
-        bytes4[] memory selectors = new bytes4[](11);
+        // The normal campaign never touches the migration lifecycle
+        bytes4[] memory selectors = new bytes4[](_withMigration ? 11 : 7);
         selectors[0] = Handler.stake.selector;
         selectors[1] = Handler.unstake.selector;
         selectors[2] = Handler.harvest.selector;
         selectors[3] = Handler.addStakingReward.selector;
         selectors[4] = Handler.addStakingRewardNonOwner.selector;
-        selectors[5] = Handler.requestMigration.selector;
-        selectors[6] = Handler.cancelMigration.selector;
-        selectors[7] = Handler.executeMigration.selector;
-        selectors[8] = Handler.expireMigration.selector;
-        selectors[9] = Handler.advanceTime.selector;
-        selectors[10] = Handler.advanceOneEpoch.selector;
+        selectors[5] = Handler.advanceTime.selector;
+        selectors[6] = Handler.advanceOneEpoch.selector;
+        if (_withMigration) {
+            selectors[7] = Handler.requestMigration.selector;
+            selectors[8] = Handler.cancelMigration.selector;
+            selectors[9] = Handler.executeMigration.selector;
+            selectors[10] = Handler.expireMigration.selector;
+        }
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     }
 
@@ -194,16 +198,49 @@ abstract contract InvariantBase is StdInvariant, Test {
     }
 }
 
-contract InvariantReward18 is InvariantBase {
+/**
+ * @notice Normal operation: stake, unstake, harvest, owner and non-owner funding and time warps, no migration
+ * @dev 128 calls per run: without migrations nothing ends a run early, and longer sequences let streams end and
+ *      restart, locks of up to 735 days expire and stakes of every level be withdrawn within one run
+ */
+/// forge-config: default.invariant.runs = 256
+/// forge-config: default.invariant.depth = 128
+contract InvariantNormalReward18 is InvariantBase {
     function setUp() public {
-        statsFile = "cache/invariant-stats-18.txt";
-        _setUp(18);
+        statsFile = "cache/invariant-stats-normal-18.txt";
+        _setUp(18, false);
     }
 }
 
-contract InvariantReward6 is InvariantBase {
+/// forge-config: default.invariant.runs = 256
+/// forge-config: default.invariant.depth = 128
+contract InvariantNormalReward6 is InvariantBase {
     function setUp() public {
-        statsFile = "cache/invariant-stats-6.txt";
-        _setUp(6);
+        statsFile = "cache/invariant-stats-normal-6.txt";
+        _setUp(6, false);
+    }
+}
+
+/**
+ * @notice Full handler including the migration lifecycle: request, cancel, execute and expiry
+ * @dev 64 calls per run: a migration needs a request (discarded 7 times out of 8), the 30 day delay and an execution,
+ *      and the runs that migrate still need calls before it for stake, unstake and harvest. About 4 in 10 runs
+ *      execute a migration
+ */
+/// forge-config: default.invariant.runs = 256
+/// forge-config: default.invariant.depth = 64
+contract InvariantMigrationReward18 is InvariantBase {
+    function setUp() public {
+        statsFile = "cache/invariant-stats-migration-18.txt";
+        _setUp(18, true);
+    }
+}
+
+/// forge-config: default.invariant.runs = 256
+/// forge-config: default.invariant.depth = 64
+contract InvariantMigrationReward6 is InvariantBase {
+    function setUp() public {
+        statsFile = "cache/invariant-stats-migration-6.txt";
+        _setUp(6, true);
     }
 }
