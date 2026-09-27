@@ -25,6 +25,9 @@ ignore = ["bench/**"]
 # Gas benchmarks, kept apart from the correctness suite: FOUNDRY_PROFILE=gas forge test
 [profile.gas]
 test = "gas"
+# Every top-level call runs as its own transaction, so storage warmed by the setup is cold again and the measured
+# gas matches a transaction receipt (including the 21,000 intrinsic gas and calldata)
+isolate = true
 
 [invariant]
 # Defaults; each campaign in test/invariant/Invariant.t.sol sets its own runs and depth with inline config and

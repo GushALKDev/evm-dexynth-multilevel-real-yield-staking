@@ -118,7 +118,7 @@ There is no pause and no emergency withdrawal. After a migration users can withd
 
 Measured in `test/Griefing.t.sol` with the example configuration:
 
-- **Forced pool updates.** Each update truncates the accumulator by less than `totalBoostedStake / 1e36` reward units. With 1e26 boosted units and a 6-decimal token that is below 1e-10 units per update, below 2.7e-4 units over a year of updates every 12 seconds. A day of forced updates every 12 seconds pays exactly the same whole units as no updates. Each forced update costs the attacker a transaction; a follow-up stake costs 79,784 gas (`snapshots/v2_2.json`, `stake_subsequent`) plus the 21,000 intrinsic gas.
+- **Forced pool updates.** Each update truncates the accumulator by less than `totalBoostedStake / 1e36` reward units. With 1e26 boosted units and a 6-decimal token that is below 1e-10 units per update, below 2.7e-4 units over a year of updates every 12 seconds. A day of forced updates every 12 seconds pays exactly the same whole units as no updates. Each forced update costs the attacker a transaction; a follow-up stake costs 141,688 gas (`snapshots/v2_2.json`, `stake_subsequent`, measured as a whole transaction), about 3.7e11 gas for a year of updates every 12 seconds.
 - **Dust stake alone at the start of a stream.** A 2 wei stake at 0.65x (1 boosted unit) that is the only stake when a stream starts receives the whole stream until someone else stakes, instead of those rewards going to `unallocatedRewards`. Over one day of a 10,000 token, 30 day stream that is 10,000 / 30 tokens. Funding a stream while the contract has no real stakers exposes it to this.
 - **Just-in-time staking before a funding.** A stake made right before `addStakingReward` earns its exact pro-rata share of the stream from that block, claimable at once. The principal stays locked until the next epoch start plus the level's lock: 30 to 45 days at level 0 in the example configuration. Staking one second before an epoch boundary gives the shortest lock, `lockingPeriod` plus one second. Short streams make this more attractive relative to the lock.
 
@@ -214,28 +214,28 @@ FOUNDRY_PROFILE=gas forge test
 python3 gas/gas_table.py
 ```
 
-Figures are the gas of the measured call, without the 21,000 intrinsic transaction gas. The v1 copy is compiled with the repo settings (solc 0.8.28, `via_ir = true`), not with its original bytecode (Hardhat, solc 0.8.19), see [bench/README.md](./bench/README.md).
+The gas profile runs with `isolate = true`: each measured call is executed as its own transaction, so storage touched by the setup is cold again and the figure includes the 21,000 intrinsic gas and the calldata cost, as a transaction receipt does. The v1 copy is compiled with the repo settings (solc 0.8.28, `via_ir = true`), not with its original bytecode (Hardhat, solc 0.8.19), see [bench/README.md](./bench/README.md).
 
 Common setup: 15 day epochs, the example multipliers and locks except that level 0 has no lock (so unstake can be measured one epoch after staking), bob staked 1000 DEXY at level 2 and 1,000,000 reward tokens added. "After N epochs" means the call happens N + 1 epochs and 1 hour after alice's stake, which gives both versions N rewarded epochs. Every measured call is 1 hour into an epoch because v1 reverts in the first seconds of an epoch (see [bench/README.md](./bench/README.md)). The stake scenarios are alice's first and second 1000 DEXY stake at level 0; the harvest-with-stakes scenarios use 100 DEXY stakes at level 0 and one rewarded epoch; the levels-touched scenarios use 100 DEXY in 1 level or in each of the 5 levels.
 
 | Scenario | v1 | v2.2 | Reduction |
 |----------|---:|-----:|----------:|
-| `stake_first` | 229,963 | 157,284 | 31.6% |
-| `stake_subsequent` | 122,263 | 79,784 | 34.7% |
-| `harvest_after_1_epoch` | 555,402 | 123,097 | 77.8% |
-| `harvest_after_10_epochs` | 2,546,841 | 123,097 | 95.2% |
-| `harvest_after_52_epochs` | 11,840,223 | 123,097 | 99.0% |
-| `harvest_after_100_epochs` | 22,461,231 | 123,097 | 99.5% |
-| `unstake_after_1_epoch` | 605,074 | 143,222 | 76.3% |
-| `unstake_after_10_epochs` | 2,596,513 | 143,222 | 94.5% |
-| `unstake_after_52_epochs` | 11,889,895 | 143,222 | 98.8% |
-| `unstake_after_100_epochs` | 22,510,903 | 143,222 | 99.4% |
-| `harvest_with_1_stake` | 555,402 | 123,097 | 77.8% |
-| `harvest_with_10_stakes` | 555,402 | 123,097 | 77.8% |
-| `harvest_with_100_stakes` | 555,402 | 123,097 | 77.8% |
-| `harvest_with_500_stakes` | 555,402 | 123,097 | 77.8% |
-| `harvest_levels_touched_1` | 555,402 | 123,097 | 77.8% |
-| `harvest_levels_touched_5` | 678,702 | 123,097 | 81.9% |
+| `stake_first` | 251,367 | 175,888 | 30.0% |
+| `stake_subsequent` | 182,967 | 141,688 | 22.6% |
+| `harvest_after_1_epoch` | 586,466 | 155,361 | 73.5% |
+| `harvest_after_10_epochs` | 2,577,905 | 155,361 | 94.0% |
+| `harvest_after_52_epochs` | 11,871,287 | 155,361 | 98.7% |
+| `harvest_after_100_epochs` | 22,492,295 | 155,361 | 99.3% |
+| `unstake_after_1_epoch` | 612,566 | 202,114 | 67.0% |
+| `unstake_after_10_epochs` | 2,604,005 | 202,114 | 92.2% |
+| `unstake_after_52_epochs` | 11,897,387 | 202,114 | 98.3% |
+| `unstake_after_100_epochs` | 22,518,395 | 202,114 | 99.1% |
+| `harvest_with_1_stake` | 586,466 | 155,361 | 73.5% |
+| `harvest_with_10_stakes` | 586,466 | 155,361 | 73.5% |
+| `harvest_with_100_stakes` | 586,466 | 155,361 | 73.5% |
+| `harvest_with_500_stakes` | 586,466 | 155,361 | 73.5% |
+| `harvest_levels_touched_1` | 586,466 | 155,361 | 73.5% |
+| `harvest_levels_touched_5` | 725,766 | 155,361 | 78.6% |
 
 In v1, `harvest` and `unstake` loop over every level for every epoch since the user's last harvest, and close any pending epochs first. v1 does not loop over stakes. v2.2 does not loop over stakes, levels or epochs.
 
