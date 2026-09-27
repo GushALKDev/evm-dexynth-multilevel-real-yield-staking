@@ -11,8 +11,9 @@ import {MockERC20} from "../mocks/MockERC20.sol";
  * @dev Absolute payouts are not comparable: v1 releases rewards per closed epoch at a rate computed when the
  *      epochs are closed (accRewards divided by the seconds since the last closed epoch), while v2.2 streams a
  *      funded amount over a chosen duration. What both must agree on is the split: with a constant set of stakes,
- *      every user receives total * boosted / totalBoosted. This test aligns both versions on the same stakes and
- *      compares each user's share of the total paid by each version.
+ *      every user receives total * boosted / totalBoosted. The tests align both versions on the same stakes and
+ *      compare each user's share of the total paid by each version, first with a constant set of stakes and then
+ *      with a user joining halfway, split into two phases that each have a constant set of stakes in both versions.
  */
 contract V1SharesTest is Test {
     uint256 internal constant EPOCH = 15 days;
@@ -28,10 +29,11 @@ contract V1SharesTest is Test {
     DexynthStakingV1 internal v1;
     DexynthStakingV2_2 internal v2;
     MockERC20 internal reward;
+    MockERC20 internal dexy;
 
     function setUp() public {
         vm.warp(2_000_000_000);
-        MockERC20 dexy = new MockERC20("Dexy Token", "DEXY", 18);
+        dexy = new MockERC20("Dexy Token", "DEXY", 18);
         reward = new MockERC20("Reward Token", "RWD", 18);
 
         DexynthStakingV1.Level[5] memory levelsV1 = [
@@ -107,6 +109,98 @@ contract V1SharesTest is Test {
             assertApproxEqAbs(p2[i], t2 * boosted[i] / TOTAL_BOOSTED, 4);
             // Both versions against each other
             assertApproxEqAbs(p1[i] * t2, p2[i] * t1, 188_040 * t2 + 4 * t1);
+        }
+    }
+
+    /**
+     * @notice A fourth user joins halfway. Phase 1 pays A, B and C only, phase 2 pays A, B, C and D, in both versions
+     * @dev Timeline (15 day epochs, v1 genesis one epoch before deployment, so v1 is in epoch 1 at deployment):
+     *      - t0 + 4 epochs + 1 hour: D stakes in v1 (epoch 5), so v1 counts D from epoch 6.
+     *      - t0 + 5 epochs + 1 hour: A, B and C harvest in both versions. v1 pays epochs 2 to 5, all without D.
+     *        Then D stakes in v2.2, which counts D from that block.
+     *      - t0 + 11 epochs + 1 hour: everyone harvests. v1 pays epochs 6 to 11, all with D; v2.2 pays the stream
+     *        since D joined, also with D.
+     *      Rounding bounds, as in the test above: a v1 user's error is below 2.35 * 2000 + 1 = 4701 wei per epoch.
+     *      Phase 1 has 4 epochs and 3 users: distance below 4 * 4 * 4701 = 75,216 wei. Phase 2 has 6 epochs and
+     *      4 users: distance below 5 * 6 * 4701 = 141,030 wei. v2.2 floors each payout once: distance below the
+     *      number of users plus 1
+     */
+    function test_V1AndV2_2ShareRewardsWhenAUserJoins() public {
+        address d = address(0xD);
+        dexy.mint(d, 3000 ether);
+        vm.startPrank(d);
+        dexy.approve(address(v1), type(uint256).max);
+        dexy.approve(address(v2), type(uint256).max);
+        vm.stopPrank();
+        uint256 start = block.timestamp;
+
+        vm.warp(start + 4 * EPOCH + 1 hours);
+        vm.prank(d);
+        v1.stake(1500 ether, 1);
+
+        // Phase 1: A, B and C only
+        vm.warp(start + 5 * EPOCH + 1 hours);
+        address[] memory abc = new address[](3);
+        uint256[] memory boostedAbc = new uint256[](3);
+        for (uint256 i = 0; i < 3; i++) {
+            abc[i] = users[i];
+            boostedAbc[i] = boosted[i];
+        }
+        uint256[] memory p1 = _harvestAll(address(v1), abc);
+        uint256[] memory p2 = _harvestAll(address(v2), abc);
+        _assertShares(p1, p2, boostedAbc, 75_216, 4);
+
+        vm.prank(d);
+        v2.stake(1500 ether, 1);
+
+        // Phase 2: A, B, C and D (1500 DEXY at 0.85x, 1275 boosted units)
+        vm.warp(start + 11 * EPOCH + 1 hours);
+        address[] memory abcd = new address[](4);
+        uint256[] memory boostedAbcd = new uint256[](4);
+        for (uint256 i = 0; i < 3; i++) {
+            abcd[i] = users[i];
+            boostedAbcd[i] = boosted[i];
+        }
+        abcd[3] = d;
+        boostedAbcd[3] = 1275;
+        p1 = _harvestAll(address(v1), abcd);
+        p2 = _harvestAll(address(v2), abcd);
+        _assertShares(p1, p2, boostedAbcd, 141_030, 5);
+    }
+
+    function _harvestAll(address _staking, address[] memory _users) internal returns (uint256[] memory paid) {
+        paid = new uint256[](_users.length);
+        for (uint256 i = 0; i < _users.length; i++) {
+            uint256 before = reward.balanceOf(_users[i]);
+            vm.prank(_users[i]);
+            // v1 and v2.2 share the harvest() signature, so one cast serves both
+            DexynthStakingV2_2(_staking).harvest();
+            paid[i] = reward.balanceOf(_users[i]) - before;
+        }
+    }
+
+    /**
+     * @dev Each version against its own proportional split (distances _d1 and _d2), then both against each other
+     */
+    function _assertShares(
+        uint256[] memory _p1,
+        uint256[] memory _p2,
+        uint256[] memory _boosted,
+        uint256 _d1,
+        uint256 _d2
+    ) internal pure {
+        uint256 t1 = 0;
+        uint256 t2 = 0;
+        uint256 totalBoosted = 0;
+        for (uint256 i = 0; i < _p1.length; i++) {
+            t1 += _p1[i];
+            t2 += _p2[i];
+            totalBoosted += _boosted[i];
+        }
+        for (uint256 i = 0; i < _p1.length; i++) {
+            assertApproxEqAbs(_p1[i], t1 * _boosted[i] / totalBoosted, _d1);
+            assertApproxEqAbs(_p2[i], t2 * _boosted[i] / totalBoosted, _d2);
+            assertApproxEqAbs(_p1[i] * t2, _p2[i] * t1, _d1 * t2 + _d2 * t1);
         }
     }
 }
