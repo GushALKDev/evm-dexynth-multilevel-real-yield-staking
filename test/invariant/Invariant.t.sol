@@ -159,10 +159,11 @@ abstract contract InvariantBase is StdInvariant, Test {
      * @notice Appends the effective calls per action of the finished run to statsFile. Not an invariant
      */
     function afterInvariant() public {
-        string[14] memory names = [
+        string[15] memory names = [
             "stake",
             "stakeAfterMigration",
             "unstake",
+            "unstakeDuringStream",
             "harvest",
             "harvestNothing",
             "addReward",

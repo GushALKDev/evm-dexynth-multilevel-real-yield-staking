@@ -97,19 +97,24 @@ contract Handler is Test {
     }
 
     /**
-     * @notice Withdraws one open stake of an actor that has one, warping to its unlockTime if it is still locked
-     * @dev The warp makes unstake execute instead of being skipped while the stake is locked
+     * @notice Withdraws an open stake, preferring one that is already unlocked. Only when every open stake is
+     *         locked does it warp to the unlock time of the first one found
+     * @dev Preferring unlocked stakes keeps most unstakes inside running streams instead of after long warps
      */
     function unstake(uint256 _actorSeed, uint256 _indexSeed) external {
-        (address actor, uint64 index, bool found) = _findOpenStake(_actorSeed, _indexSeed);
+        (address actor, uint64 index, bool found, bool unlocked) = _findOpenStake(_actorSeed, _indexSeed);
         vm.assume(found);
-        (,,, uint40 unlockTime,,) = staking.stakeInfo(actor, index);
-        if (!staking.migrated() && block.timestamp < unlockTime) vm.warp(unlockTime);
+        if (!unlocked) {
+            (,,, uint40 unlockTime,,) = staking.stakeInfo(actor, index);
+            vm.warp(unlockTime);
+        }
+        bool streamRunning = block.timestamp < staking.rewardEndTime();
 
         vm.prank(actor);
         staking.unstake(index);
         ghost_settlements++;
         effective["unstake"]++;
+        if (streamRunning) effective["unstakeDuringStream"]++;
     }
 
     /**
@@ -272,22 +277,25 @@ contract Handler is Test {
     }
 
     /**
-     * @dev First actor, starting at the seed, with an open stake, and the first open stake starting at the index seed
+     * @dev Searches actors and stakes starting at the seeds. Returns the first open stake that can be withdrawn now
+     *      (unlocked, or any stake after a migration), otherwise the first open stake found, with unlocked = false
      */
     function _findOpenStake(uint256 _actorSeed, uint256 _indexSeed)
         internal
         view
-        returns (address actor, uint64 index, bool found)
+        returns (address actor, uint64 index, bool found, bool unlocked)
     {
+        bool isMigrated = staking.migrated();
         for (uint256 a = 0; a < NUM_ACTORS; a++) {
-            actor = actors[(_actorSeed % NUM_ACTORS + a) % NUM_ACTORS];
-            (uint64 count,,,,,) = staking.users(actor);
+            address candidate = actors[(_actorSeed % NUM_ACTORS + a) % NUM_ACTORS];
+            (uint64 count,,,,,) = staking.users(candidate);
             for (uint64 i = 0; i < count; i++) {
-                index = uint64((_indexSeed % count + i) % count);
-                (bool unstaked,,,,,) = staking.stakeInfo(actor, index);
-                if (!unstaked) return (actor, index, true);
+                uint64 idx = uint64((_indexSeed % count + i) % count);
+                (bool unstaked,,, uint40 unlockTime,,) = staking.stakeInfo(candidate, idx);
+                if (unstaked) continue;
+                if (isMigrated || block.timestamp >= unlockTime) return (candidate, idx, true, true);
+                if (!found) (actor, index, found) = (candidate, idx, true);
             }
         }
-        return (address(0), 0, false);
     }
 }
