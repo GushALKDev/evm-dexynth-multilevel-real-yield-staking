@@ -1,4 +1,4 @@
-// Original Dexynth staking contract (v1, 2023-2024), included only for gas benchmarks, used with permission.
+// Original Dexynth staking contract (v1, 2023-2024), included only for gas benchmarks and the differential test, used with permission.
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.7;
 

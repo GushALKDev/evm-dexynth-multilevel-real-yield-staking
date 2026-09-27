@@ -1,6 +1,6 @@
 # bench
 
-`DexynthStakingV1.sol` is the original Dexynth staking contract (v1, 2023-2024), taken from commit `ff28790` and used, with permission, only by the gas benchmarks in `gas/` and by the differential test `test/differential/V1Shares.t.sol`. Its header line says "included only for gas benchmarks", as specified when it was added. It is not imported by `src/`, it is excluded from `forge fmt` and from the coverage command in the README, and apart from a header comment and its import paths it is unchanged.
+`DexynthStakingV1.sol` is the original Dexynth staking contract (v1, 2023-2024), taken from commit `ff28790` and used, with permission, only by the gas benchmarks in `gas/` and by the differential test `test/differential/V1Shares.t.sol`. Its header comment says the same: "included only for gas benchmarks and the differential test, used with permission". It is not imported by `src/`, it is excluded from `forge fmt` and from the coverage command in the README, and apart from a header comment and its import paths it is unchanged.
 
 It is compiled with the repo settings (solc 0.8.28, `via_ir = true`), not with the Hardhat setup and solc 0.8.19 of the original project, so its gas figures are not those of the originally deployed bytecode.
 
