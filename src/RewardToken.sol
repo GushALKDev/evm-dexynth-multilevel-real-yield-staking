@@ -5,7 +5,7 @@ import {ERC20} from "@openzeppelin/token/ERC20/ERC20.sol";
 import {Ownable} from "@openzeppelin/access/Ownable.sol";
 
 /**
- * @notice Test ERC20 used as the reward token in the tests and the gas benchmarks, not part of the staking system
+ * @notice Test ERC20 used as the reward token by test/DexynthStaking.t.sol, not part of the staking system
  * @dev Mints 1,000,000,000 tokens with 18 decimals to the deployer
  */
 contract RewardToken is ERC20, Ownable {
