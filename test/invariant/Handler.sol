@@ -35,6 +35,17 @@ contract Handler is Test {
     uint256 public ghost_rewardsAdded;
 
     /**
+     * @notice Successful stake, unstake and harvest calls. Each settles the caller once, and each settlement can
+     *         leave less than 1 wei of rounding dust in the contract
+     */
+    uint256 public ghost_settlements;
+
+    /**
+     * @notice Executed migrations. Each floors the migrated amount once, leaving less than 1 wei in the contract
+     */
+    uint256 public ghost_migrations;
+
+    /**
      * @notice Number of calls per action that reached the contract, including calls asserted to revert
      */
     mapping(bytes32 => uint256) public effective;
@@ -81,6 +92,7 @@ contract Handler is Test {
         }
         vm.prank(actor);
         staking.stake(_amount, level);
+        ghost_settlements++;
         effective["stake"]++;
     }
 
@@ -96,6 +108,7 @@ contract Handler is Test {
 
         vm.prank(actor);
         staking.unstake(index);
+        ghost_settlements++;
         effective["unstake"]++;
     }
 
@@ -112,6 +125,7 @@ contract Handler is Test {
             if (staking.pendingRewards(actor) > 0) {
                 vm.prank(actor);
                 staking.harvest();
+                ghost_settlements++;
                 effective["harvest"]++;
                 return;
             }
@@ -212,6 +226,7 @@ contract Handler is Test {
 
         vm.prank(owner);
         staking.executeMigration();
+        ghost_migrations++;
         effective["executeMigration"]++;
     }
 

@@ -77,12 +77,18 @@ abstract contract InvariantBase is StdInvariant, Test {
 
     /**
      * @notice The reward balance covers the rewards accrued and not claimed, the rewards scheduled and not yet
-     *         streamed, and unallocatedRewards
+     *         streamed, and unallocatedRewards, and exceeds them only by rounding dust
      * @dev Accrued rewards are read with pendingRewards, which rounds each user down. The scheduled and unallocated
      *      parts are kept scaled by 1e36, including the stream since the last pool update when no one is staked,
-     *      and rounded up. No tolerance: the balance is an integer, so it must be at least the rounded-up total
+     *      and rounded up. Lower bound: no tolerance, the balance is an integer and must be at least the rounded-up
+     *      total. Upper bound: the only value that can stay in the contract without being owed or scheduled is
+     *      rounding dust, below 1 wei per settlement (ghost_settlements), per executed migration (ghost_migrations)
+     *      and per actor in the pendingRewards floor above (NUM_ACTORS), plus below 1 wei for all the 1e36-scaled
+     *      truncations together (rate floors below 180 days / 1e36 per funding, accumulator floors below
+     *      totalBoostedStake / 1e36, at most about 2e25 / 1e36, per update). Losing or withholding any real reward
+     *      breaks the upper bound
      */
-    function invariant_rewardBalanceCoversLiabilities() public view {
+    function invariant_rewardBalanceMatchesLiabilities() public view {
         uint256 accrued = 0;
         for (uint256 a = 0; a < handler.NUM_ACTORS(); a++) {
             accrued += staking.pendingRewards(handler.getActor(a));
@@ -98,7 +104,10 @@ abstract contract InvariantBase is StdInvariant, Test {
         if (staking.totalBoostedStake() == 0 && streamedEnd > last) scaled += (streamedEnd - last) * rate;
 
         uint256 liabilities = accrued + Math.ceilDiv(scaled, 1e36);
-        assertGe(reward.balanceOf(address(staking)), liabilities, "reward balance < liabilities");
+        uint256 balance = reward.balanceOf(address(staking));
+        assertGe(balance, liabilities, "reward balance < liabilities");
+        uint256 maxDust = handler.ghost_settlements() + handler.ghost_migrations() + handler.NUM_ACTORS() + 1;
+        assertLe(balance - liabilities, maxDust, "reward balance exceeds liabilities by more than rounding dust");
     }
 
     /**
@@ -147,16 +156,6 @@ abstract contract InvariantBase is StdInvariant, Test {
     }
 
     /**
-     * @notice After a migration the stream stays stopped and no request can be pending
-     */
-    function invariant_migrationStopsStream() public view {
-        if (!staking.migrated()) return;
-        assertEq(staking.rewardRate(), 0, "rate after migration");
-        assertEq(staking.unallocatedRewards(), 0, "unallocated after migration");
-        assertEq(staking.pendingMigrationAddress(), address(0), "pending request after migration");
-    }
-
-    /**
      * @notice Appends the effective calls per action of the finished run to statsFile. Not an invariant
      */
     function afterInvariant() public {
@@ -199,6 +198,21 @@ abstract contract InvariantBase is StdInvariant, Test {
 }
 
 /**
+ * @notice Invariant that only means something when migrations happen, added to the migration campaign only
+ */
+abstract contract InvariantMigrationBase is InvariantBase {
+    /**
+     * @notice After a migration the stream stays stopped and no request can be pending
+     */
+    function invariant_migrationStopsStream() public view {
+        if (!staking.migrated()) return;
+        assertEq(staking.rewardRate(), 0, "rate after migration");
+        assertEq(staking.unallocatedRewards(), 0, "unallocated after migration");
+        assertEq(staking.pendingMigrationAddress(), address(0), "pending request after migration");
+    }
+}
+
+/**
  * @notice Normal operation: stake, unstake, harvest, owner and non-owner funding and time warps, no migration
  * @dev 128 calls per run: without migrations nothing ends a run early, and longer sequences let streams end and
  *      restart, locks of up to 735 days expire and stakes of every level be withdrawn within one run
@@ -229,7 +243,7 @@ contract InvariantNormalReward6 is InvariantBase {
  */
 /// forge-config: default.invariant.runs = 256
 /// forge-config: default.invariant.depth = 64
-contract InvariantMigrationReward18 is InvariantBase {
+contract InvariantMigrationReward18 is InvariantMigrationBase {
     function setUp() public {
         statsFile = "cache/invariant-stats-migration-18.txt";
         _setUp(18, true);
@@ -238,7 +252,7 @@ contract InvariantMigrationReward18 is InvariantBase {
 
 /// forge-config: default.invariant.runs = 256
 /// forge-config: default.invariant.depth = 64
-contract InvariantMigrationReward6 is InvariantBase {
+contract InvariantMigrationReward6 is InvariantMigrationBase {
     function setUp() public {
         statsFile = "cache/invariant-stats-migration-6.txt";
         _setUp(6, true);
