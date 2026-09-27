@@ -1,6 +1,9 @@
 # Dexynth Multilevel Real Yield Staking
 
-Original contract written at Dexynth (2023-2024). v2, v2.1 and v2.2 are a later independent rework (Dec 2025 - Sep 2026) that replaces the loop-based reward logic with reward accumulators (per level in v2 and v2.1, one accumulator per boosted unit in v2.2).
+[![CI](https://github.com/GushALKDev/evm-dexynth-multilevel-real-yield-staking/actions/workflows/ci.yml/badge.svg)](https://github.com/GushALKDev/evm-dexynth-multilevel-real-yield-staking/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+
+Original contract written at Dexynth (2023-2024). v2, v2.1 and v2.2 are a later independent rework (Dec 2025 - Sep 2026) that replaces the loop-based reward logic with a reward-per-share accumulator (one per level in v2 and v2.1, a single global one in v2.2).
 
 **Status:** Proof of concept. Not audited. Not deployed.
 
@@ -26,7 +29,8 @@ Original contract written at Dexynth (2023-2024). v2, v2.1 and v2.2 are a later 
 - `unstake` on an index the caller never used reverts (`StakeNotFound`).
 - Migration only moves the rewards that are not streamed yet. After it, `stake` and `addStakingReward` revert and `unstake` ignores the lock.
 - The rewards funded over the life of the contract are capped at `MAX_TOTAL_FUNDING`, and at most `MAX_LEVELS = 10` levels are accepted.
-- Events: `RewardAdded(amount, duration, rewardRate)` is new, `DEXYMigrationSuccess` is removed (DEXY is never migrated).
+- Ownership changes take two steps (`transferOwnership` then `acceptOwnership`) and `renounceOwnership` reverts.
+- Events: `DEXYStaked` and `DEXYUnstaked` carry the stake index and the level, indexed together with the user. `RewardAdded(amount, duration, rewardRate)` is new. `DEXYMigrationSuccess` is removed (DEXY is never migrated).
 - The contract is renamed `DexynthStakingV2_2`. The `users` and `stakeInfo` getters return the new struct fields.
 
 ## Precision and bounds
@@ -37,10 +41,6 @@ Original contract written at Dexynth (2023-2024). v2, v2.1 and v2.2 are a later 
 - A stake's amount and its boosted amount must each fit in `uint128`, otherwise `stake` reverts.
 
 `test/Bounds.t.sol` covers these limits: the maximum funding streamed in full, the minimum boosted stake alone with the maximum funding, the maximum stake amount, and the reverts just above each limit.
-
-```bash
-forge test --match-path test/Bounds.t.sol
-```
 
 ## Staking levels
 
@@ -66,8 +66,8 @@ The `totalStaked` field of the argument is ignored and every level starts at zer
 ## Tokens
 
 - `DEXY` and `REWARD_TOKEN` are immutable addresses set at deployment and must be different. The deploy script reads them from the `DEXY_ADDRESS` and `REWARD_TOKEN_ADDRESS` environment variables.
-- The contract never reads `decimals()`. The invariant suite runs with an 18-decimal and a 6-decimal reward token.
-- Tokens are expected to transfer exactly the requested amount. Fee-on-transfer and rebasing tokens are not supported.
+- All six token calls go through OpenZeppelin `SafeERC20`. The contract never reads `decimals()` or `balanceOf`; the invariant suites run with an 18-decimal and a 6-decimal reward token.
+- Fee-on-transfer and rebasing tokens are not supported: the contract records the amount requested, not the amount received. `test/FeeOnTransfer.t.sol` shows that with a 1% fee DEXY the last unstake reverts, and with a 1% fee reward token the stream promises more than the balance and harvest reverts.
 
 ## Core functions
 
@@ -95,13 +95,13 @@ function executeMigration() external;
 - `executeMigration()` can run from 30 days to 37 days after the request (`MIGRATION_WINDOW = 7 days`). After that the request has expired, execution reverts with `MigrationExpired` and a new request can be made.
 - `executeMigration()` updates the pool, stops the stream and transfers only the rewards that are not streamed yet plus `unallocatedRewards`. Staked DEXY and the rewards already accrued to stakers stay in the contract.
 - After a migration, `stake`, `addStakingReward` and `requestMigration` revert with `AlreadyMigrated`, `unstake` ignores the lock, and accrued rewards can still be harvested.
-- `cancelMigration()` clears a pending request.
+- `cancelMigration()` clears a pending request. A pending request survives an ownership change and the new owner can execute it.
 
 ## Trust assumptions and limitations
 
 ### Owner powers
 
-The owner is the deployer (OpenZeppelin `Ownable` v4.9.3, single-step `transferOwnership` and `renounceOwnership`).
+The owner is the deployer. Ownership uses OpenZeppelin `Ownable2Step` v4.9.3.
 
 | Function | What it can do to user funds or rewards |
 |----------|------------------------------------------|
@@ -109,20 +109,28 @@ The owner is the deployer (OpenZeppelin `Ownable` v4.9.3, single-step `transferO
 | `requestMigration(address)` | Stores a destination and starts the 30 day delay. Nothing moves yet. |
 | `cancelMigration()` | Clears the pending request. |
 | `executeMigration()` | Within the 7 day window after the delay, moves the rewards that are not streamed yet and the unallocated rewards to the destination, and stops the stream for good. It cannot move staked DEXY or rewards already accrued to stakers. |
-| `transferOwnership(address)` | Hands all of the above to another address. |
-| `renounceOwnership()` | Removes the owner: no more funding and no migration. |
+| `transferOwnership(address)` | Nominates a new owner, who takes over only after calling `acceptOwnership`. |
+| `renounceOwnership()` | Disabled, reverts with `RenounceOwnershipDisabled`. |
 
 There is no pause and no emergency withdrawal. After a migration users can withdraw their principal at any time.
+
+### Griefing and extraction
+
+Measured in `test/Griefing.t.sol` with the example configuration:
+
+- **Forced pool updates.** Each update truncates the accumulator by less than `totalBoostedStake / 1e36` reward units. With 1e26 boosted units and a 6-decimal token that is below 1e-10 units per update, below 2.7e-4 units over a year of updates every 12 seconds. A day of forced updates every 12 seconds pays exactly the same whole units as no updates. Each forced update costs the attacker a transaction; a follow-up stake costs 79,784 gas (`snapshots/v2_2.json`, `stake_subsequent`) plus the 21,000 intrinsic gas.
+- **Dust stake alone at the start of a stream.** A 2 wei stake at 0.65x (1 boosted unit) that is the only stake when a stream starts receives the whole stream until someone else stakes, instead of those rewards going to `unallocatedRewards`. Over one day of a 10,000 token, 30 day stream that is 10,000 / 30 tokens. Funding a stream while the contract has no real stakers exposes it to this.
+- **Just-in-time staking before a funding.** A stake made right before `addStakingReward` earns its exact pro-rata share of the stream from that block, claimable at once. The principal stays locked until the next epoch start plus the level's lock: 30 to 45 days at level 0 in the example configuration. Staking one second before an epoch boundary gives the shortest lock, `lockingPeriod` plus one second. Short streams make this more attractive relative to the lock.
 
 ### Other limitations
 
 - Rewards streamed while nobody is staked are kept in `unallocatedRewards` and only reach stakers after the owner calls `addStakingReward` again (or leave with a migration).
-- Rounding always favours the contract. The dust that no user can claim stays in the contract.
+- Rounding always favours the contract. The dust that no user can claim (the floor of each settlement and of each accumulator update) stays in the contract with no function to recover it, except that a migration moves the unstreamed and unallocated part.
 - `harvest` reverts for a user with no open stake. Nothing is lost: `unstake` pays all accrued rewards when the last stake is withdrawn.
 
 ## Setup
 
-Dependencies are git submodules pinned to release tags (forge-std v1.12.0, OpenZeppelin v4.9.3, also recorded in `foundry.lock`).
+Dependencies are git submodules pinned to release tags (forge-std v1.12.0, OpenZeppelin v4.9.3, also recorded in `foundry.lock`). The toolchain used for every figure in this README is Foundry v1.7.1 with solc 0.8.28 and `via_ir = true`.
 
 ```bash
 git clone --recursive https://github.com/GushALKDev/evm-dexynth-multilevel-real-yield-staking.git
@@ -133,8 +141,11 @@ forge build
 ## Testing
 
 ```bash
-# Unit, regression, bounds, reentrancy, differential and invariant tests
+# All correctness tests: unit, regression, bounds, edge cases, events, griefing, reentrancy, differential, invariants
 forge test
+
+# Number of tests
+forge test --list | grep -cE '^    [a-zA-Z]'
 
 # Invariant suites only
 forge test --match-path test/invariant/Invariant.t.sol
@@ -143,7 +154,7 @@ forge test --match-path test/invariant/Invariant.t.sol
 forge coverage --no-match-coverage "(bench|test|script)"
 ```
 
-`forge test` runs 101 tests. Fuzz tests use Foundry's default of 256 runs.
+`forge test` runs 132 tests. Fuzz tests use Foundry's default of 256 runs.
 
 | File | Tests | What they check |
 |------|-------|-----------------|
@@ -151,20 +162,38 @@ forge coverage --no-match-coverage "(bench|test|script)"
 | `test/Validation.t.sol` | 14 | Every constructor and parameter check |
 | `test/regression/*.t.sol` | 26 | One file per review finding (see Review notes) |
 | `test/Bounds.t.sol` | 7 | Precision and overflow bounds |
+| `test/EdgeCases.t.sol` | 6 | Stake and harvest at `rewardEndTime`, funding while a stream runs, when it ends and long after |
+| `test/Events.t.sol` | 6 | Full payload of every event with `vm.expectEmit` |
 | `test/Reentrancy.t.sol` | 5 | A token that reenters stake, unstake, harvest, addStakingReward and executeMigration hits the guard |
+| `test/Griefing.t.sol` | 4 | Forced updates, dust stake, just-in-time stake, epoch boundary lock |
 | `test/HarvestGasIndependence.t.sol` | 3 | Identical harvest gas across stake counts, epochs and levels touched |
+| `test/Ownership.t.sol` | 3 | Two-step ownership, renounce disabled, pending migration across an ownership change |
+| `test/FeeOnTransfer.t.sol` | 2 | The shortfalls a fee-on-transfer DEXY or reward token produces (unsupported) |
 | `test/differential/V1Shares.t.sol` | 1 | v1 and v2.2 split rewards by boosted stake in the same way (absolute payouts are not comparable, see the test) |
-| `test/invariant/Invariant.t.sol` | 10 | 5 invariants, run with an 18-decimal and a 6-decimal reward token |
+| `test/invariant/Invariant.t.sol` | 20 | 5 invariants in 4 suites (2 campaigns x 2 reward token decimals) |
 
 Reward checks compare against the exact rational value: a payout may be below it by a stated number of wei, justified in each test, and never above it.
 
-`forge coverage --no-match-coverage "(bench|test|script)"` reports for `src/DexynthStaking.sol`: 100% lines (159/159), 99.03% statements (204/206), 100% branches (38/38) and 100% functions (17/17). The two statements reported as uncovered are the constant expression `MIGRATION_DELAY + MIGRATION_WINDOW`, which the compiler folds.
+Coverage, from `forge coverage --no-match-coverage "(bench|test|script)"`:
+
+| Contract | Lines | Statements | Branches | Functions |
+|----------|-------|------------|----------|-----------|
+| `src/DexynthStaking.sol` | 100% (163/163) | 99.04% (207/209) | 100% (38/38) | 100% (18/18) |
+| `src/DEXY.sol` | 100% (2/2) | 100% (1/1) | 100% (0/0) | 100% (1/1) |
+| `src/RewardToken.sol` | 100% (2/2) | 100% (1/1) | 100% (0/0) | 100% (1/1) |
+
+The two statements reported as uncovered are the constant expression `MIGRATION_DELAY + MIGRATION_WINDOW`, which the compiler folds.
 
 ### Invariant tests
 
-Settings in `foundry.toml`: `runs = 256`, `depth = 64`, `fail_on_revert = true`. The handler asserts every revert the contract should raise with `vm.expectRevert`, so any other revert fails the run. Calls that have nothing to do in the current state are discarded with `vm.assume`.
+The handler asserts every revert the contract should raise with `vm.expectRevert`, and the suites run with `fail_on_revert = true`, so any other revert fails the run. Calls that have nothing to do in the current state are discarded with `vm.assume`. Effective calls per action are appended to `cache/invariant-stats-<campaign>-<decimals>.txt` at the end of each run.
 
-The handler has 10 actors and 11 actions: stake (small and regular amounts), unstake (warping to the unlock time if needed), harvest, owner funding (small and regular amounts), non-owner funding (must revert), migration request, cancel, execute and expiry, and two time warps. After a migration, stake and funding must revert. Effective calls per action are appended to `cache/invariant-stats-18.txt` and `cache/invariant-stats-6.txt` at the end of each run.
+| Campaign | Suites | Runs | Depth | Handler actions |
+|----------|--------|------|-------|-----------------|
+| Normal operation | `InvariantNormalReward18`, `InvariantNormalReward6` | 256 | 128 | stake (small and regular amounts), unstake (warping to the unlock time if needed), harvest, owner funding, non-owner funding (must revert), two time warps |
+| Migration | `InvariantMigrationReward18`, `InvariantMigrationReward6` | 256 | 64 | the same plus migration request, cancel, execute and expiry; after a migration stake and funding must revert |
+
+Runs and depth are set per suite with inline config and justified next to each suite in `test/invariant/Invariant.t.sol`.
 
 | Invariant | What it checks |
 |-----------|----------------|
@@ -172,41 +201,62 @@ The handler has 10 actors and 11 actions: stake (small and regular amounts), uns
 | `invariant_rewardBalanceCoversLiabilities` | The reward balance is at least the sum of `pendingRewards` of every actor plus the unstreamed and unallocated rewards, rounded up. No tolerance. |
 | `invariant_rewardConservation` | Rewards added equal rewards paid to actors plus rewards migrated plus rewards held, exactly, and equal `totalRewardsFunded`. |
 | `invariant_boostedAndUserAccounting` | `totalBoostedStake` equals the boosted amounts of the open stakes and the sum of the users' boosted balances. Each user's totals match their open stakes. |
-| `invariant_migrationStopsStream` | After a migration the rate and unallocated rewards stay at zero and no request is pending. |
+| `invariant_migrationStopsStream` | After a migration the rate and unallocated rewards stay at zero and no request is pending. In the normal campaign no migration happens, so it only checks the migration campaign. |
 
-With these settings both suites found no violations in 256 runs of depth 64 for each invariant.
+With these settings the four suites found no violations.
 
 ## Gas
 
-Gas benchmarks live in `gas/` and run in their own profile. They compare the original v1 contract (a frozen copy in `bench/`, used only for benchmarks) with v2.2 under the same named scenarios and write the results to `snapshots/v1.json` and `snapshots/v2_2.json`.
+Gas benchmarks live in `gas/` and run in their own profile. They compare the original v1 contract (a frozen copy in `bench/`, used only for benchmarks) with v2.2 under the same named scenarios, write the results to `snapshots/v1.json` and `snapshots/v2_2.json`, and `gas/gas_table.py` prints the table below from those files.
 
 ```bash
 FOUNDRY_PROFILE=gas forge test
-cat snapshots/v1.json snapshots/v2_2.json
+python3 gas/gas_table.py
 ```
 
-Figures are the gas of the measured call, without the 21,000 intrinsic transaction gas. Common setup: 15 day epochs, the example multipliers and locks except that level 0 has no lock (so unstake can be measured one epoch after staking), bob staked 1000 DEXY at level 2 and 1,000,000 reward tokens added. "After N epochs" means the call happens N + 1 epochs and 1 hour after alice's stake, which gives both versions N rewarded epochs. Every call is 1 hour into an epoch because v1 reverts in the first seconds of an epoch (see Review notes).
+Figures are the gas of the measured call, without the 21,000 intrinsic transaction gas. The v1 copy is compiled with the repo settings (solc 0.8.28, `via_ir = true`), not with its original bytecode (Hardhat, solc 0.8.19), see [bench/README.md](./bench/README.md).
 
-| Scenario | v1 | v2.2 |
-|----------|---:|-----:|
-| `stake_first`: alice's first stake, 1000 DEXY at level 0 | 229,963 | 156,223 |
-| `stake_subsequent`: alice's second stake in the same block | 122,263 | 78,723 |
-| `harvest_after_1_epoch` | 555,402 | 123,097 |
-| `harvest_after_10_epochs` | 2,546,841 | 123,097 |
-| `harvest_after_52_epochs` | 11,840,223 | 123,097 |
-| `harvest_after_100_epochs` | 22,461,231 | 123,097 |
-| `unstake_after_1_epoch` (level 0 stake, rewards included) | 605,074 | 142,193 |
-| `unstake_after_10_epochs` | 2,596,513 | 142,193 |
-| `unstake_after_52_epochs` | 11,889,895 | 142,193 |
-| `unstake_after_100_epochs` | 22,510,903 | 142,193 |
-| `harvest_with_1_stake`: 100 DEXY stakes at level 0, after 1 rewarded epoch | 555,402 | 123,097 |
-| `harvest_with_10_stakes` | 555,402 | 123,097 |
-| `harvest_with_100_stakes` | 555,402 | 123,097 |
-| `harvest_with_500_stakes` | 555,402 | 123,097 |
-| `harvest_levels_touched_1`: 100 DEXY in 1 level, after 1 rewarded epoch | 555,402 | 123,097 |
-| `harvest_levels_touched_5`: 100 DEXY in each of the 5 levels | 678,702 | 123,097 |
+Common setup: 15 day epochs, the example multipliers and locks except that level 0 has no lock (so unstake can be measured one epoch after staking), bob staked 1000 DEXY at level 2 and 1,000,000 reward tokens added. "After N epochs" means the call happens N + 1 epochs and 1 hour after alice's stake, which gives both versions N rewarded epochs. Every measured call is 1 hour into an epoch because v1 reverts in the first seconds of an epoch (see [bench/README.md](./bench/README.md)). The stake scenarios are alice's first and second 1000 DEXY stake at level 0; the harvest-with-stakes scenarios use 100 DEXY stakes at level 0 and one rewarded epoch; the levels-touched scenarios use 100 DEXY in 1 level or in each of the 5 levels.
+
+| Scenario | v1 | v2.2 | Reduction |
+|----------|---:|-----:|----------:|
+| `stake_first` | 229,963 | 157,284 | 31.6% |
+| `stake_subsequent` | 122,263 | 79,784 | 34.7% |
+| `harvest_after_1_epoch` | 555,402 | 123,097 | 77.8% |
+| `harvest_after_10_epochs` | 2,546,841 | 123,097 | 95.2% |
+| `harvest_after_52_epochs` | 11,840,223 | 123,097 | 99.0% |
+| `harvest_after_100_epochs` | 22,461,231 | 123,097 | 99.5% |
+| `unstake_after_1_epoch` | 605,074 | 143,222 | 76.3% |
+| `unstake_after_10_epochs` | 2,596,513 | 143,222 | 94.5% |
+| `unstake_after_52_epochs` | 11,889,895 | 143,222 | 98.8% |
+| `unstake_after_100_epochs` | 22,510,903 | 143,222 | 99.4% |
+| `harvest_with_1_stake` | 555,402 | 123,097 | 77.8% |
+| `harvest_with_10_stakes` | 555,402 | 123,097 | 77.8% |
+| `harvest_with_100_stakes` | 555,402 | 123,097 | 77.8% |
+| `harvest_with_500_stakes` | 555,402 | 123,097 | 77.8% |
+| `harvest_levels_touched_1` | 555,402 | 123,097 | 77.8% |
+| `harvest_levels_touched_5` | 678,702 | 123,097 | 81.9% |
 
 In v1, `harvest` and `unstake` loop over every level for every epoch since the user's last harvest, and close any pending epochs first. v1 does not loop over stakes. v2.2 does not loop over stakes, levels or epochs.
+
+## Static analysis
+
+Slither 0.11.6 and Aderyn 0.6.8 on `src/`:
+
+```bash
+slither . --filter-paths "lib|test|script|bench|gas"
+aderyn . --path-excludes test,script,bench,gas,lib
+```
+
+| Tool | Finding | Location | Status |
+|------|---------|----------|--------|
+| Slither | `timestamp` (Low), 8 functions | `unstake`, `addStakingReward`, `requestMigration`, `cancelMigration`, `executeMigration`, `pendingRewards`, `_updatePool`, `_settle` | Accepted: the stream, locks and migration window are time based by design, and a few seconds of validator drift are negligible against periods of days |
+| Slither | `naming-convention` (Informational), 11 items | parameters with a leading underscore, `DEXY`, `REWARD_TOKEN`, `I_GENESIS_EPOCH_TIMESTAMP`, `DexynthStakingV2_2` | Accepted: repo naming convention; `I_GENESIS_EPOCH_TIMESTAMP` is kept to preserve the getter name |
+| Slither | `divide-before-multiply` | `addStakingReward`, rebuilding the unstreamed amount from `rewardRate` | Suppressed inline with its justification: the rate keeps 36 extra decimals, so the loss is below `(rewardEndTime - now) / 1e36` units |
+| Slither | `incorrect-equality` | `_settle`, `acc == snapshot` | Suppressed inline with its justification: an early return when nothing accrued, not a balance check |
+| Aderyn | ETH transferred without address checks (High), 3 instances | `stake`, `unstake`, `harvest` | False positive: the contract never transfers ETH, only ERC20 tokens to `msg.sender` through SafeERC20 |
+| Aderyn | Centralization risk (Low), 8 instances | owner functions, `Ownable2Step` inheritance, the test tokens | Accepted: owner powers are listed under Trust assumptions |
+| Aderyn | Large numeric literal (Low), 2 instances | `src/DEXY.sol`, `src/RewardToken.sol` | Accepted: test token supplies, written with digit separators |
 
 ## Security measures
 
@@ -214,83 +264,108 @@ In v1, `harvest` and `unstake` loop over every level for every epoch since the u
 - **Checks-Effects-Interactions:** state is updated before every token transfer.
 - **Token transfers:** OpenZeppelin `SafeERC20`.
 - **Casts:** OpenZeppelin `SafeCast` for every narrowing conversion, except three commented casts that are bounded by a previous check.
-- **Access control:** OpenZeppelin `Ownable` on funding and migration.
+- **Access control:** OpenZeppelin `Ownable2Step` on funding and migration.
 
 ## Review notes
 
-One entry per finding of the round 1 review and of this round. The tests of each finding were run against the code before its fix, and the ones that encode the fixed behaviour failed there.
+One entry per finding of the three review rounds. The tests of each finding were run against the code before its fix, and the ones that encode the fixed behaviour failed there.
 
-### Permissionless `addStakingReward`
+### Round 1 findings, fixed in round 2
+
+#### Permissionless `addStakingReward`
 
 - **Cause.** The function had no access control, so anyone could reschedule the remaining stream for free, stretching it or compressing it into one second.
 - **Fix.** `onlyOwner`.
-- **Test.** `test/regression/AddRewardAccess.t.sol` (stretch and compress attempts by a non-owner revert), plus the handler's non-owner funding action.
+- **Test.** `test/regression/AddRewardAccess.t.sol`, plus the handler's non-owner funding action.
 - **Commit.** `9f44894`.
 
-### Precision loss with low-decimal reward tokens
+#### Precision loss with low-decimal reward tokens
 
 - **Cause.** `rewardRate` was truncated to whole units per second and the per-level accumulator had 1e18 precision per DEXY. With 6 decimals and 10M DEXY in a level, pool updates every 12 seconds rounded the accumulator increment to zero.
-- **Fix.** `rewardRate` and the accumulator are scaled by 1e36, products use `Math.mulDiv`, and the funding cap bounds every value (see Precision and bounds).
-- **Test.** `test/regression/RewardPrecision.t.sol`, `test/Bounds.t.sol`, and the invariant suite with a 6-decimal token.
+- **Fix.** `rewardRate` and the accumulator are scaled by 1e36, products use `Math.mulDiv`, and the funding cap bounds every value.
+- **Test.** `test/regression/RewardPrecision.t.sol`, `test/Bounds.t.sol`, and the invariant suites with a 6-decimal token.
 - **Commits.** `be001bc`, cap in `d02eb37`.
 
-### Rewards streamed with no stakers
+#### Rewards streamed with no stakers
 
 - **Cause.** When `totalBoostedStake` was zero the pool skipped the elapsed time, and those rewards stayed in the contract with no claimant. A 1 wei stake at 0.65x had a boosted amount of zero and caused the same.
 - **Fix.** The skipped amount goes to `unallocatedRewards` and is rolled into the next funding; stakes with a zero boosted amount revert.
 - **Test.** `test/regression/UnallocatedRewards.t.sol`.
 - **Commit.** `668897a`.
 
-### Migration could move locked principal and requests never expired
+#### Migration could move locked principal and requests never expired
 
 - **Cause.** `executeMigration` transferred the whole DEXY and reward balances, including locked principal and accrued rewards, and a request stayed executable forever.
 - **Fix.** Migration moves only unstreamed and unallocated rewards, stops the stream, expires 7 days after the delay, and unlocks principal afterwards.
-- **Test.** `test/regression/Migration.t.sol`, plus the handler's migration actions and `invariant_migrationStopsStream`.
+- **Test.** `test/regression/Migration.t.sol`, the migration campaign and `invariant_migrationStopsStream`.
 - **Commit.** `6997f6d`.
 
-### Rewards accrued before `rewardStartTime`
+#### Rewards accrued before `rewardStartTime`
 
 - **Cause.** v2.1 documented `rewardStartTime` as the start of accrual, but stakes accrued from creation and the field only delayed claiming.
 - **Fix.** `rewardStartTime` is removed. Rewards accrue and are claimable from the stake's block; the next epoch start only anchors `unlockTime`.
 - **Test.** `testRewardsAccrueFromStakeTime` in `test/DexynthStaking.t.sol`.
 - **Commit.** `d02eb37`.
 
-### `harvest` cost grew with the number of stakes
+#### `harvest` cost grew with the number of stakes
 
 - **Cause.** v2.1 settled rewards per stake, so `harvest` looped over every stake the user had ever created. Against v2.1 the regression test measured 391,631 gas with 10 stakes against 165,470 with one.
 - **Fix.** Per-user accounting with one accumulator per boosted unit (v2.2).
 - **Test.** `test/HarvestGasIndependence.t.sol`.
 - **Commit.** `d02eb37`.
 
-### Small findings
+#### Small findings
 
 - `unstake` on a never used index succeeded and emitted an event with amount 0. It now reverts with `StakeNotFound`. Test in `test/regression/InfoFindings.t.sol`, commit `73a24ed`.
 - The constructor accepted `DEXY == REWARD_TOKEN`. It now reverts with `SameToken`. Commit `046e2d7`.
 - The number of levels had no cap and the constructor loop used a `uint8` counter. The cap is `MAX_LEVELS = 10` and the counter is `uint256`. Commit `42dec44`.
 - `migrationRequestTime` was a `uint32`, truncated from February 2106. It is now `uint40`. Commit `d0c2395`.
 
-### Constructor copied `Level.totalStaked`
-
-- **Cause.** Found in round 2. The constructor stored the `totalStaked` value it received, so a non-zero value created stake that nobody owned. With 1000 DEXY of such stake in level 0 and one real staker of 1000 DEXY, the staker received 5,000 of 10,000 funded tokens.
-- **Fix.** Levels are stored with `totalStaked = 0`.
-- **Test.** `test/regression/ConstructorLevels.t.sol`.
-- **Commit.** `45458c5`.
-
-### v2.1 rounding fix in `totalBoostedStake`
+#### v2.1 rounding fix in `totalBoostedStake`
 
 - **Cause.** In v2, `stake` and `unstake` updated `totalBoostedStake` with per-stake rounded values, while the reward split used per-level rounded values, so the two drifted apart by a few wei.
 - **Fix.** v2.1 (`d39e101`) recomputed the total from the level totals. v2.2 makes it structural: each stake stores its `boostedAmount`, `unstake` subtracts exactly that value, and the reward split uses the same total.
 - **Test.** `invariant_boostedAndUserAccounting` checks that `totalBoostedStake` equals the sum of the open stakes' boosted amounts after every handler call.
 
-### v1 epoch timestamp drift (not fixed, frozen benchmark copy)
+### Round 2 finding
 
-The original v1 computes epoch start times with `(epochDuration + 1) * index`, one second per epoch more than the index calculation, and `checkForClosingEpochs` underflows in the first L + 1 seconds of an epoch once L epochs are closed. The rework fixed it in `14b8f8f`. The copy in `bench/` keeps the original code, so the gas benchmarks measure every call 1 hour into an epoch.
+#### Constructor copied `Level.totalStaked`
+
+- **Cause.** The constructor stored the `totalStaked` value it received, so a non-zero value created stake that nobody owned. With 1000 DEXY of such stake in level 0 and one real staker of 1000 DEXY, the staker received 5,000 of 10,000 funded tokens.
+- **Fix.** Levels are stored with `totalStaked = 0`.
+- **Test.** `test/regression/ConstructorLevels.t.sol`.
+- **Commit.** `45458c5`.
+
+#### v1 epoch timestamp drift (not fixed, frozen benchmark copy)
+
+- **Cause.** The original v1 computes epoch start times with `(epochDuration + 1) * index`, and `checkForClosingEpochs` underflows in the first L + 1 seconds of an epoch once L epochs are closed.
+- **Fix.** Fixed in the rework in `14b8f8f`. The copy in `bench/` keeps the original code, and the gas benchmarks measure every call 1 hour into an epoch.
+
+### Round 3
+
+#### Single-step ownership and `renounceOwnership`
+
+- **Cause.** With `Ownable`, a mistyped `transferOwnership` address would lose funding and migration for good, and `renounceOwnership` would do the same on purpose. Users could still withdraw and claim in both cases.
+- **Fix.** `Ownable2Step` and `renounceOwnership` disabled.
+- **Test.** `test/Ownership.t.sol`.
+- **Commit.** `75c3886`.
+
+#### Stake events without index and level
+
+- **Cause.** `DEXYStaked` and `DEXYUnstaked` only carried the user and the amount, so an indexer could not tell which stake or level they referred to.
+- **Fix.** Both events carry the stake index and the level, indexed with the user.
+- **Test.** `test/Events.t.sol`.
+- **Commit.** `444a459`.
+
+#### Fee-on-transfer tokens, dust stakes and just-in-time staking
+
+- Documented as limitations with measurements, no code change: `test/FeeOnTransfer.t.sol` (commit `13a4e6f`) and `test/Griefing.t.sol` (commit `40a0633`). See Trust assumptions and limitations.
 
 ## Changelog
 
 ### v2.2 (Sep 2026)
 
-Fixes for the round 1 review findings, per-user reward accounting with one accumulator per boosted unit, migration redesign, precision and funding bounds, a rewritten test suite (exact expectations, solvency and conservation invariants, reentrancy and bounds tests), a gas harness against v1, dependencies as pinned submodules and an MIT license. See Review notes and the changes for users above.
+Fixes for the round 1 review findings, per-user reward accounting with a single reward-per-share accumulator, migration redesign, precision and funding bounds, two-step ownership, stake events with index and level, a rewritten test suite (exact expectations, solvency and conservation invariants in two campaigns, reentrancy, bounds, edge case, griefing and event tests), a gas harness against v1, CI, dependencies as pinned submodules and an MIT license. See Review notes and the changes for users above.
 
 ### v2.1 (Jan 2026): internal review
 
