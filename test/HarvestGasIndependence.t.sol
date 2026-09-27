@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {StakingFixture} from "./utils/StakingFixture.sol";
+import {DexynthStakingV2_2} from "../src/DexynthStaking.sol";
 
 /**
  * @notice harvest must not loop over stakes, levels or epochs
@@ -73,5 +74,41 @@ contract HarvestGasIndependenceTest is StakingFixture {
         vm.prank(alice);
         staking.harvest();
         assertEq(vm.lastCallGas().gasTotalUsed, oneLevel);
+    }
+
+    /**
+     * @notice A deployment with 10 levels harvests at the same cost as one with a single level
+     * @dev Both use the scenario of the other tests on a fresh contract. A loop over the configured levels would make
+     *      the 10-level harvest more expensive
+     */
+    function test_HarvestGasIndependentOfConfiguredLevels() public {
+        uint256 snap = vm.snapshotState();
+        uint256 oneLevel = _harvestGasWithLevels(1);
+        vm.revertToState(snap);
+        uint256 tenLevels = _harvestGasWithLevels(10);
+        assertEq(tenLevels, oneLevel);
+    }
+
+    function _harvestGasWithLevels(uint256 _count) internal returns (uint256) {
+        DexynthStakingV2_2.Level[] memory levels = new DexynthStakingV2_2.Level[](_count);
+        for (uint256 i = 0; i < _count; i++) {
+            // Multipliers centred on 1.0x in 0.1x steps, lock of i + 1 days
+            uint256 boost = (2e10 + (2 * i + 1) * 1e9 - _count * 1e9) / 2;
+            levels[i] = DexynthStakingV2_2.Level(uint32((i + 1) * 1 days), uint64(boost), 0);
+        }
+        staking = new DexynthStakingV2_2(address(dexy), address(reward), levels, EPOCH);
+        vm.prank(alice);
+        dexy.approve(address(staking), type(uint256).max);
+        vm.prank(bob);
+        dexy.approve(address(staking), type(uint256).max);
+        reward.approve(address(staking), type(uint256).max);
+
+        _stake(bob, 1000 ether, 0);
+        _fund(1_000_000 ether, 3650 days);
+        _stake(alice, 100 ether, 0);
+        vm.warp(block.timestamp + 60 days);
+        vm.prank(alice);
+        staking.harvest();
+        return vm.lastCallGas().gasTotalUsed;
     }
 }

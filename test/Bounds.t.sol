@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {stdError} from "forge-std/StdError.sol";
+import {Math} from "@openzeppelin/utils/math/Math.sol";
 import {StakingFixture} from "./utils/StakingFixture.sol";
 
 /**
@@ -61,17 +62,19 @@ contract BoundsTest is StakingFixture {
         vm.prank(bob);
         staking.harvest();
 
-        // Day 1: alice alone receives half. Day 2: alice holds 1 of 1 + 1e24 boosted units
-        uint256 half = MAX_FUNDING / 2;
+        // Day 1: alice alone receives half. Day 2: alice holds 1 of 1 + 1e24 boosted units. Exact shares:
+        // alice MAX * (B + 2) / (2 * (B + 1)) and bob MAX * B / (2 * (B + 1)), rounded down here. A payout can only be
+        // below its exact share: by less than 1 unit from its one settlement plus less than 1e-12 units from the rate
+        // and accumulator truncations, so at most 1 unit below the rounded-down share and never above it
         uint256 bobBoosted = 1_000_000 ether;
-        uint256 expectedAlice = half + half / (1 + bobBoosted);
-        uint256 expectedBob = half * bobBoosted / (1 + bobBoosted);
+        uint256 exactAlice = Math.mulDiv(MAX_FUNDING, bobBoosted + 2, 2 * (bobBoosted + 1));
+        uint256 exactBob = Math.mulDiv(MAX_FUNDING, bobBoosted, 2 * (bobBoosted + 1));
         uint256 a = reward.balanceOf(alice);
         uint256 b = reward.balanceOf(bob);
-        // 3 units: the rate truncation (below 1 unit per day), the accumulator truncation (below 1e24 / 1e36 units
-        // per update) and the final floor of each payout (below 1 unit), plus the rounding of the expected values
-        assertApproxEqAbs(a, expectedAlice, 3);
-        assertApproxEqAbs(b, expectedBob, 3);
+        assertLe(a, exactAlice);
+        assertGe(a, exactAlice - 1);
+        assertLe(b, exactBob);
+        assertGe(b, exactBob - 1);
         assertLe(a + b, MAX_FUNDING);
         assertEq(a + b + reward.balanceOf(address(staking)), MAX_FUNDING);
     }
@@ -95,12 +98,25 @@ contract BoundsTest is StakingFixture {
         assertGe(reward.balanceOf(alice), 1000 ether - 222);
     }
 
+    /**
+     * @notice At 1.35x the largest accepted amount is the one whose boosted amount is type(uint128).max, one more
+     *         DEXY unit crosses the limit
+     * @dev limit = ceil(2^128 * 1e10 / 1.35e10) is the smallest amount with a boosted amount of at least 2^128
+     */
     function test_RevertWhen_BoostedAmountExceedsUint128() public {
-        uint256 amount = type(uint128).max;
-        dexy.mint(alice, amount);
-        vm.prank(alice);
+        uint256 limit = Math.ceilDiv((uint256(type(uint128).max) + 1) * 1e10, 13500000000);
+        dexy.mint(alice, limit);
+        dexy.mint(bob, limit);
+
+        // limit - 1 at 1.35x has a boosted amount of at most type(uint128).max and is accepted
+        _stake(alice, limit - 1, 4);
+        assertEq(staking.totalBoostedStake(), (limit - 1) * 13500000000 / 1e10);
+        assertLe(staking.totalBoostedStake(), type(uint128).max);
+
+        // limit has a boosted amount of at least 2^128 and reverts
+        vm.prank(bob);
         vm.expectRevert("SafeCast: value doesn't fit in 128 bits");
-        staking.stake(amount, 4);
+        staking.stake(limit, 4);
     }
 
     function test_RevertWhen_StakeAmountExceedsUint128() public {

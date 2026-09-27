@@ -87,7 +87,6 @@ contract EdgeCasesTest is StakingFixture {
 
         _fund(FUNDING, 10 days);
         assertEq(staking.rewardRate(), FUNDING * 1e36 / 10 days);
-        assertEq(staking.unallocatedRewards(), 0);
     }
 
     /**

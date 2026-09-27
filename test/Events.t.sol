@@ -99,5 +99,8 @@ contract EventsTest is StakingFixture {
         emit DexynthStakingV2_2.RewardTokenMigrationSuccess(expected, address(0xDEAD));
         staking.executeMigration();
         assertEq(reward.balanceOf(address(0xDEAD)), expected);
+        // Independent bound: the whole 1000 token stream moves, floored once, so at most 1 wei less
+        assertLe(expected, 1000 ether);
+        assertGe(expected, 1000 ether - 1);
     }
 }

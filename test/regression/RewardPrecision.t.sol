@@ -13,7 +13,7 @@ contract RewardPrecisionTest is StakingFixture {
     function setUp() public {
         _deploy(6);
         _stake(alice, 10_000_000 ether, 0);
-        vm.warp(block.timestamp + EPOCH); // alice is past rewardStartTime
+        vm.warp(block.timestamp + EPOCH); // the stream starts one epoch after alice's stake
     }
 
     /**

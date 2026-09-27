@@ -127,12 +127,16 @@ contract DexynthStakingTest is Test {
         staking.executeMigration();
 
         vm.warp(block.timestamp + 30 days + 1);
-        uint256 expectedMoved = (uint256(staking.rewardEndTime()) - block.timestamp) * staking.rewardRate() / 1e36;
+        // Unstreamed part: 1000 tokens * (30 days - 1) / 60 days. The contract floors the scaled amount once, so the
+        // transfer is at most that value and at most 1 wei below it
+        uint256 unstreamed = Math.mulDiv(1000 ether, 30 days - 1, 60 days);
 
         staking.executeMigration();
 
         // Only the unstreamed rewards move, DEXY principal stays
-        assertEq(rewardToken.balanceOf(newContract), expectedMoved);
+        uint256 moved = rewardToken.balanceOf(newContract);
+        assertLe(moved, unstreamed);
+        assertGe(moved, unstreamed - 1);
         assertEq(dexy.balanceOf(newContract), 0);
         assertEq(dexy.balanceOf(address(staking)), 500 ether);
         assertTrue(staking.migrated());
