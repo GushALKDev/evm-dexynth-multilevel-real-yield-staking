@@ -56,7 +56,7 @@ npm run dev                  # reads the Base Sepolia deployment
 Against a local chain instead (anvil and a full deployment):
 
 ```bash
-./app/scripts/local-chain.sh                 # from the repo root; writes src/config/deployments/31337.json
+./app/scripts/local-chain.sh                 # from the repo root; deploys, checks, writes deployments/31337.json
 cd app && VITE_CHAIN_ID=31337 npm run dev
 ```
 
@@ -104,14 +104,18 @@ Fund that address with a little Base Sepolia ETH from one of the
 ```bash
 forge script script/testnet/DeployTestnet.s.sol \
   --rpc-url https://sepolia.base.org --account demo-deployer --broadcast
+forge script script/testnet/ConfirmDeployment.s.sol --rpc-url https://sepolia.base.org
 ```
 
-The script simulates everything first, including a smoke test in which a fresh address claims, stakes, earns for
-an hour and harvests, and only then broadcasts. It deploys the faucet and its two tokens and the staking contract,
-seeds the five levels, mints 100,000 USDC to the deployer and funds the stream over 365 days. On a broadcast it
-writes `app/src/config/deployments/84532.json`, which the app reads: commit that file. A run without `--broadcast`
-leaves the file alone. Nothing in it depends on a price or a short time window, so a failed run can simply be run
-again.
+The first script simulates everything first, including a smoke test in which a fresh address claims, stakes, earns
+for an hour and harvests, and only then broadcasts. It deploys the faucet and its two tokens and the staking
+contract, seeds the five levels, mints 100,000 USDC to the deployer and funds the stream over 365 days. Forge runs a
+script in full before it sends anything, so the first script only records the addresses, in
+`cache/testnet-deployment-84532.json`. The second sends nothing: it checks on the chain that every recorded address
+holds code and that the contracts are wired and configured as the first script sets them up, and only then writes
+`app/src/config/deployments/84532.json`, which the app reads: commit that file. If a broadcast fails halfway, the
+check fails and the app's file stays as it was. If the RPC has not caught up with the deployment yet, run the check
+again. Nothing in either script depends on a price or a short time window.
 
 To fund the stream again later, with the same key (it spreads the new amount plus whatever is not streamed yet over
 the new duration, which changes the rate for every staker):

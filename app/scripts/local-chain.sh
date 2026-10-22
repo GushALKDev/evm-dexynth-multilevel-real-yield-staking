@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Local rehearsal of the testnet deployment: anvil, then DeployTestnet (faucet, tokens, staking, seed, stream).
-# Writes app/src/config/deployments/31337.json; start the app with VITE_CHAIN_ID=31337.
+# Local rehearsal of the testnet deployment: anvil, DeployTestnet (faucet, tokens, staking, seed, stream), then
+# ConfirmDeployment, which checks the contracts on the chain and writes app/src/config/deployments/31337.json.
+# Start the app with VITE_CHAIN_ID=31337.
 # Requires Foundry. Run from anywhere: ./app/scripts/local-chain.sh
 set -euo pipefail
 
@@ -18,4 +19,5 @@ if ! cast chain-id --rpc-url "$RPC" >/dev/null 2>&1; then
 fi
 
 forge script script/testnet/DeployTestnet.s.sol --rpc-url "$RPC" --private-key "$KEY" --broadcast -q
+forge script script/testnet/ConfirmDeployment.s.sol --rpc-url "$RPC" -q
 echo "Wrote app/src/config/deployments/31337.json"

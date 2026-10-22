@@ -23,12 +23,15 @@ import {TestnetFaucet} from "./TestnetFaucet.sol";
  *      - Stream: STREAM_AMOUNT USDC over STREAM_DURATION, funded by the deployer, who stays the owner.
  *      The protocol has no oracle or other external dependency. Before anything is sent, the script runs a smoke
  *      test in simulation: a fresh address claims, stakes, earns for an hour and harvests, and the run reverts if
- *      any step fails. On a broadcast it also writes the deployment file the app reads.
+ *      any step fails. On a --broadcast run it writes the addresses to a pending file in cache/. Forge runs the whole
+ *      script before it sends anything, so that file can name contracts a failed broadcast never deployed:
+ *      ConfirmDeployment.s.sol checks them on the chain and only then writes the deployment file the app reads.
  *
  *      Usage (Base Sepolia):
  *        forge script script/testnet/DeployTestnet.s.sol --rpc-url https://sepolia.base.org \
  *          --account <keystore> --broadcast
- *      Optional env: DEPLOYMENT_FILE.
+ *        forge script script/testnet/ConfirmDeployment.s.sol --rpc-url https://sepolia.base.org
+ *      Optional env: PENDING_FILE.
  */
 contract DeployTestnet is DeployDexynthStaking {
     /**
@@ -97,8 +100,8 @@ contract DeployTestnet is DeployDexynthStaking {
 
         _smokeTest(faucet, staking);
 
-        // Only on a real broadcast: a dry run must not overwrite the file with addresses never deployed
-        if (vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) _writeDeployment();
+        // Only on a --broadcast run, and still to a pending file: forge has not sent anything yet at this point
+        if (vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) vm.writeJson(deploymentJson(), pendingFile());
 
         console2.log("Staking:", address(staking));
         console2.log("Faucet:", address(faucet));
@@ -123,11 +126,11 @@ contract DeployTestnet is DeployDexynthStaking {
     }
 
     /**
-     * @notice Where the deployment file lives: DEPLOYMENT_FILE, or the app's file for this chain id
+     * @notice Where the run records the addresses for ConfirmDeployment: PENDING_FILE, or a file in cache/ per chain
      */
-    function deploymentFile() public view returns (string memory) {
-        string memory defaultPath = string.concat("app/src/config/deployments/", vm.toString(block.chainid), ".json");
-        return vm.envOr("DEPLOYMENT_FILE", defaultPath);
+    function pendingFile() public view returns (string memory) {
+        string memory defaultPath = string.concat("cache/testnet-deployment-", vm.toString(block.chainid), ".json");
+        return vm.envOr("PENDING_FILE", defaultPath);
     }
 
     /**
@@ -156,10 +159,10 @@ contract DeployTestnet is DeployDexynthStaking {
     }
 
     /**
-     * @dev Writes the addresses the app needs to app/src/config/deployments/<chainId>.json. The app reads every
-     *      parameter (levels, epoch, stream) from the contracts themselves
+     * @notice The addresses the app needs, as the JSON of its deployment file. The app reads every parameter (levels,
+     *         epoch, stream) from the contracts themselves
      */
-    function _writeDeployment() internal {
+    function deploymentJson() public returns (string memory) {
         TestnetDeployment memory d = deployment;
         string memory root = "deployment";
         vm.serializeUint(root, "chainId", block.chainid);
@@ -168,7 +171,6 @@ contract DeployTestnet is DeployDexynthStaking {
         vm.serializeAddress(root, "faucet", address(d.faucet));
         vm.serializeAddress(root, "dexy", address(d.faucet.DEXY()));
         vm.serializeAddress(root, "rewardToken", address(d.faucet.USDC()));
-        root = vm.serializeAddress(root, "owner", d.owner);
-        vm.writeJson(root, deploymentFile());
+        return vm.serializeAddress(root, "owner", d.owner);
     }
 }

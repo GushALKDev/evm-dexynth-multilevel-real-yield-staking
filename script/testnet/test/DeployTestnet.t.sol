@@ -23,10 +23,10 @@ contract DeployHarness is DeployDexynthStaking {
  * @title DeployTestnetTest
  * @notice Rehearses DeployTestnet.s.sol, then drives the deployment the way the demo app does: claim, approve the
  *         exact amount, stake, harvest and unstake, plus the failure modes and what a stranger can try
- * @dev Run with FOUNDRY_PROFILE=testnet. Outside a broadcast the deploy script writes no file
+ * @dev Run with FOUNDRY_PROFILE=testnet. Outside a --broadcast run the deploy script writes no file
  */
 contract DeployTestnetTest is Test {
-    string internal constant DRY_RUN_FILE = "app/src/config/deployments/dry-run-must-not-exist.json";
+    string internal constant DRY_RUN_FILE = "cache/testnet-dry-run-must-not-exist.json";
 
     address internal constant VISITOR = address(0xA11CE);
     address internal constant GRIEFER = address(0xBAD);
@@ -41,7 +41,7 @@ contract DeployTestnetTest is Test {
 
     function setUp() public {
         vm.warp(1_800_000_000);
-        vm.setEnv("DEPLOYMENT_FILE", DRY_RUN_FILE);
+        vm.setEnv("PENDING_FILE", DRY_RUN_FILE);
         script = new DeployTestnet();
         script.run();
         (faucet, staking, owner,) = script.deployment();
@@ -102,8 +102,9 @@ contract DeployTestnetTest is Test {
         assertEq(staking.unallocatedRewards(), 0);
     }
 
-    function test_DryRunWritesNoDeploymentFile() public view {
+    function test_DryRunWritesNoPendingFile() public view {
         assertFalse(vm.exists(DRY_RUN_FILE));
+        assertEq(script.pendingFile(), DRY_RUN_FILE);
     }
 
     function test_SmokeTestLeavesNoTrace() public {
