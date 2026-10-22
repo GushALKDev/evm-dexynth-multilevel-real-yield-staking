@@ -9,3 +9,5 @@ test-results/
 *.tsbuildinfo
 # Wrangler local state
 .wrangler/
+# Vite dev cache
+.vite/
