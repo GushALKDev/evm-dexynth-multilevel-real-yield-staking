@@ -133,10 +133,13 @@ TOP_UP_USDC=100000 TOP_UP_DAYS=365 forge script script/testnet/TopUpRewards.s.so
   --rpc-url https://sepolia.base.org --account demo-deployer --broadcast
 ```
 
-To verify the contracts, add `--verify --verifier blockscout --verifier-url https://base-sepolia.blockscout.com/api/`
-to the deploy command (Blockscout needs no key). BaseScan verification goes through the Etherscan API V2, whose
-chain list marks Base Sepolia as paid plan only (`https://api.etherscan.io/v2/chainlist`); with a paid key, use
-`--verify --etherscan-api-key <key>` instead.
+To verify the contracts, add `--verify --verifier sourcify` to the deploy command; Sourcify needs no key. The
+deployment of 22 Oct 2026 was verified this way, with an exact match for all four contracts. Blockscout's keyless
+API (`--verifier blockscout`) answered "Too many requests" to every attempt, even one contract at a time.
+BaseScan verification goes through the Etherscan API V2, whose chain list marks Base Sepolia as paid plan only
+(`https://api.etherscan.io/v2/chainlist`); with a paid key, use `--verify --etherscan-api-key <key>` instead.
+To verify an already deployed contract, use `forge verify-contract <address> <path>:<name> --constructor-args <abi
+encoded args> --chain 84532 --verifier sourcify`.
 
 The testnet tooling has its own tests, kept apart so the protocol's test figures stay unchanged:
 
