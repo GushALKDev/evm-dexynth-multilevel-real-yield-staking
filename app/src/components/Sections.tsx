@@ -142,7 +142,8 @@ export function HowItWorks({ model }: { model: StakingModel }) {
                 faucet contract
               </a>
               , with no value. The faucet hands out {formatFixed(st.drip, d.dexy.decimals, 0)} DEXY per account once
-              every 24 hours. USDC is only earned.
+              every 24 hours. USDC is earned by staking; only the owner receives it from the faucet,{' '}
+              {formatFixed(st.ownerDrip, d.reward.decimals, 0)} per claim, to fund the stream.
             </li>
             <li>
               Epochs last {formatDuration(model.epochs.duration)}, the shortest the contract accepts, and the locks run

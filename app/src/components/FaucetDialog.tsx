@@ -11,6 +11,7 @@ export function FaucetDialog({ model, onClose, onConnect }: { model: StakingMode
   const { address, chainId } = useConnection()
   const { run, busy } = useTx()
   const wrongNetwork = !!address && chainId !== chain.id
+  const isOwner = !!address && address.toLowerCase() === model.live.owner.toLowerCase()
   const watch = useWatchAsset()
   const d = model.deployment
   const acc = model.account
@@ -27,7 +28,8 @@ export function FaucetDialog({ model, onClose, onConnect }: { model: StakingMode
     <Dialog title="Test tokens" onClose={onClose}>
       <p className="muted">
         The faucet hands out testnet DEXY with no value, once every 24 hours per account. USDC, the reward token, is
-        only earned by staking. Transactions also need a little {chain.name} ETH for gas.
+        earned by staking; only the owner receives it from the faucet, to fund the stream. Transactions also need a
+        little {chain.name} ETH for gas.
       </p>
       <div className="rows" style={{ margin: '14px 0 18px' }}>
         <div className="row">
@@ -37,6 +39,15 @@ export function FaucetDialog({ model, onClose, onConnect }: { model: StakingMode
           </span>
           <span style={{ fontWeight: 500 }}>{formatFixed(model.static.drip, d.dexy.decimals, 0)}</span>
         </div>
+        {isOwner ? (
+          <div className="row">
+            <span className="asset">
+              <TokenIcon symbol="USDC" />
+              USDC, as the owner
+            </span>
+            <span style={{ fontWeight: 500 }}>{formatFixed(model.static.ownerDrip, d.reward.decimals, 0)}</span>
+          </div>
+        ) : null}
       </div>
 
       {!address ? (
@@ -59,9 +70,15 @@ export function FaucetDialog({ model, onClose, onConnect }: { model: StakingMode
           <button
             className="btn btn-primary btn-block"
             disabled={!canClaim || !!busy || noGas}
-            onClick={() => run('Claim test DEXY', 'Test DEXY claimed', { address: d.faucet, abi: faucetAbi, functionName: 'claim' })}
+            onClick={() =>
+              run(isOwner ? 'Claim test tokens' : 'Claim test DEXY', isOwner ? 'Test tokens claimed' : 'Test DEXY claimed', {
+                address: d.faucet,
+                abi: faucetAbi,
+                functionName: 'claim',
+              })
+            }
           >
-            {busy ? 'Claiming…' : 'Claim test DEXY'}
+            {busy ? 'Claiming…' : isOwner ? 'Claim test tokens' : 'Claim test DEXY'}
           </button>
           {!canClaim && acc ? (
             <p className="hint">You claimed less than 24 hours ago. The faucet opens again for you at {formatTime(next)}.</p>

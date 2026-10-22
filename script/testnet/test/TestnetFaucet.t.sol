@@ -54,6 +54,14 @@ contract TestnetFaucetTest is Test {
         assertEq(faucet.nextClaimAt(ALICE), block.timestamp + 1 days);
     }
 
+    function test_OwnerClaimAlsoSendsUsdcToFundTheStream() public {
+        vm.prank(OWNER, OWNER);
+        faucet.claim();
+        assertEq(dexy.balanceOf(OWNER), 10_000e18);
+        assertEq(usdc.balanceOf(OWNER), 100_000e6);
+        assertEq(faucet.nextClaimAt(OWNER), block.timestamp + 1 days);
+    }
+
     function test_SecondClaimWithinADayReverts() public {
         vm.prank(ALICE, ALICE);
         faucet.claim();

@@ -26,7 +26,7 @@ describe('projection times', () => {
 
 describe('the streamed figure', () => {
   const d = loadFixtureDeployment()
-  const st = { epochDuration: 86_400n, genesis: 1_000n, drip: 10n ** 22n, cooldown: 86_400n, migrationDelay: 2_592_000n, migrationWindow: 604_800n }
+  const st = { epochDuration: 86_400n, genesis: 1_000n, drip: 10n ** 22n, ownerDrip: 10n ** 11n, cooldown: 86_400n, migrationDelay: 2_592_000n, migrationWindow: 604_800n }
   const live = (over: Partial<LiveData>): LiveData => ({
     pool: {
       rewardRate: 0n,
@@ -70,7 +70,7 @@ function loadFixtureDeployment(): Deployment {
 
 describe('migration status', () => {
   const d = loadFixtureDeployment()
-  const st = { epochDuration: 86_400n, genesis: 1_000n, drip: 10n ** 22n, cooldown: 86_400n, migrationDelay: 2_592_000n, migrationWindow: 604_800n }
+  const st = { epochDuration: 86_400n, genesis: 1_000n, drip: 10n ** 22n, ownerDrip: 10n ** 11n, cooldown: 86_400n, migrationDelay: 2_592_000n, migrationWindow: 604_800n }
   const base = (over: Partial<LiveData>): LiveData => ({
     pool: { rewardRate: 0n, totalBoostedStake: 1n, accRewardPerBoostedShare: 0n, unallocatedRewards: 0n, lastRewardTime: 10_000n, rewardEndTime: 10_000n },
     levels: [{ lockingPeriod: 3_600n, boostP: 10n ** 10n, totalStaked: 1n }],
@@ -97,7 +97,7 @@ describe('migration status', () => {
 describe('account figures', () => {
   it('come from the pool read in the same call as the account, not from a staler pool read', () => {
     const d = loadFixtureDeployment()
-    const st = { epochDuration: 86_400n, genesis: 1_000n, drip: 10n ** 22n, cooldown: 86_400n, migrationDelay: 1n, migrationWindow: 1n }
+    const st = { epochDuration: 86_400n, genesis: 1_000n, drip: 10n ** 22n, ownerDrip: 10n ** 11n, cooldown: 86_400n, migrationDelay: 1n, migrationWindow: 1n }
     const stale = { rewardRate: 10n ** 36n, totalBoostedStake: 10n ** 18n, accRewardPerBoostedShare: 5n * 10n ** 18n, unallocatedRewards: 0n, lastRewardTime: 1_000n, rewardEndTime: 10n ** 9n }
     const fresh = { ...stale, accRewardPerBoostedShare: 9n * 10n ** 18n, lastRewardTime: 1_100n }
     const live: LiveData = {

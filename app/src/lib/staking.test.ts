@@ -6,6 +6,7 @@ import { describeError } from './errors'
 import { countdown, formatDuration } from './format'
 import {
   PRECISION,
+  applyFunding,
   applyHarvest,
   applyStake,
   applyUnstake,
@@ -13,6 +14,7 @@ import {
   pendingRewards,
   rewardsOver,
   settle,
+  streamedOverDay,
   unlockTimeFor,
   unstreamedScaled,
   updatePool,
@@ -150,6 +152,33 @@ describe('stream estimates', () => {
   })
 })
 
+describe('funding', () => {
+  it('spreads the unstreamed rewards plus the new amount over the new duration', () => {
+    const p = pool({ unallocatedRewards: 7n })
+    const t = T0 + 1_000n
+    const out = applyFunding(p, 5_000n * 10n ** 6n, 30n * 86_400n, t)
+    const leftover = 7n + (p.rewardEndTime - t) * p.rewardRate
+    expect(out.rewardRate).toBe((leftover + 5_000n * 10n ** 6n * PRECISION) / (30n * 86_400n))
+    expect(out.rewardEndTime).toBe(t + 30n * 86_400n)
+    expect(out.unallocatedRewards).toBe(0n)
+    expect(out.accRewardPerBoostedShare).toBe(updatePool(p, t).accRewardPerBoostedShare)
+    expect(out.lastRewardTime).toBe(t)
+  })
+
+  it('after the stream ended, spreads only the new amount and what streamed with nobody staked', () => {
+    const p = pool({ unallocatedRewards: 3n, rewardEndTime: T0 + 10n })
+    const out = applyFunding(p, 10n ** 6n, 86_400n, T0 + 100n)
+    expect(out.rewardRate).toBe((3n + 10n ** 6n * PRECISION) / 86_400n)
+  })
+
+  it('with no new amount only respreads what is not streamed yet', () => {
+    const p = pool()
+    const t = T0 + 50n
+    expect(applyFunding(p, 0n, 86_400n, t).rewardRate).toBe(((p.rewardEndTime - t) * p.rewardRate) / 86_400n)
+    expect(streamedOverDay(applyFunding(p, 0n, 86_400n, t), t)).toBe(((p.rewardEndTime - t) * p.rewardRate) / PRECISION)
+  })
+})
+
 describe('gas margin', () => {
   it('covers with its fixed part alone the 64,476 gas the estimate can miss', () => {
     expect(withGasMargin(0n)).toBeGreaterThan(64_476n)
@@ -183,6 +212,6 @@ describe('error messages', () => {
   it('decode the string reverts of OpenZeppelin 4.9', () => {
     const errorString = parseAbi(['error Error(string)'])
     const data = encodeErrorResult({ abi: errorString, errorName: 'Error', args: ['ERC20: insufficient allowance'] })
-    expect(describeError(revert(data))).toBe('The staking contract is not approved to move this much DEXY yet. Approve it first.')
+    expect(describeError(revert(data))).toBe('The staking contract is not approved to move this amount yet. Approve it first.')
   })
 })

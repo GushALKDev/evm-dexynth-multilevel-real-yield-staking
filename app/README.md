@@ -21,6 +21,10 @@ Proof of concept, not audited, for educational purposes. The tokens are testnet 
   transaction.
 - **Levels and the epoch clock.** What 1,000 DEXY staked now would earn a day at each level, at today's pool, and
   how far the current epoch has run, since a stake unlocks at the next epoch start plus its lock.
+- **Funding the stream.** Anyone can preview what a funding would do to the daily rate, the unstreamed total and
+  the end of the stream, computed as `addStakingReward` computes it. Only the owner's wallet can send it: the panel
+  mints any USDC the owner is short through the faucet, approves it and funds, and a faucet claim also gives the
+  owner 100,000 USDC.
 
 ## What is a testnet stand-in
 
@@ -33,7 +37,8 @@ other external dependency, so the only stand-ins are the tokens and the demo con
   hours. What it checks: the limit per account, that claims come straight from an externally owned account (so one
   transaction cannot claim through many fresh contracts), and that only its owner mints freely or seeds stakes.
   What it does not check: someone who funds many accounts can claim with each. Smart contract wallets cannot claim.
-  USDC is not handed out; it is only earned by staking.
+  USDC is earned by staking; only the faucet's owner receives it from a claim, 100,000 per claim, to fund the
+  stream.
 - **The seed.** Before the stream starts, the faucet contract stakes 500,000 DEXY across the five levels (50,000,
   75,000, 125,000, 125,000 and 125,000), 50 faucet drips. The faucet has no function to unstake or harvest, so the
   pool never empties and no dust stake can be alone in it when the stream starts. The rewards that seed earns stay

@@ -51,11 +51,12 @@ interface ISeedTarget {
 /**
  * @title TestnetFaucet
  * @notice Deploys the two testnet tokens of the demo, DEXY (18 decimals) and USDC (6 decimals, the reward token),
- *         and hands out DEXY_DRIP DEXY once a day per address. Testnet only
+ *         and hands out DEXY_DRIP DEXY once a day per address, plus OWNER_USDC_DRIP USDC when the owner claims, to
+ *         fund the reward stream. Testnet only
  * @dev What it checks: one claim per address per COOLDOWN, claims only from externally owned accounts (so one
  *      transaction cannot claim through many fresh contracts), and only the owner can mint freely or seed stakes. What
  *      it does not check: the limit is per account, so someone funding many accounts can claim many times. Smart
- *      contract wallets cannot claim. The reward token is not handed out, users only earn it. Stakes made through seedStake belong to this contract, which has
+ *      contract wallets cannot claim. Only the owner receives the reward token from a claim; everyone else earns it. Stakes made through seedStake belong to this contract, which has
  *      no function to unstake or harvest them, so the seeded DEXY stays staked for good and the rewards it earns stay
  *      in the staking contract
  */
@@ -96,6 +97,11 @@ contract TestnetFaucet is Ownable {
     uint256 public constant DEXY_DRIP = 10_000e18;
 
     /**
+     * @notice USDC handed out per claim to the owner only, who funds the reward stream with it
+     */
+    uint256 public constant OWNER_USDC_DRIP = 100_000e6;
+
+    /**
      * @notice Testnet stand-in for DEXY, the staked token
      */
     TestnetToken public immutable DEXY;
@@ -117,7 +123,8 @@ contract TestnetFaucet is Ownable {
     }
 
     /**
-     * @notice Sends DEXY_DRIP DEXY to the caller, at most once per COOLDOWN, if the caller is not a contract
+     * @notice Sends DEXY_DRIP DEXY to the caller, and OWNER_USDC_DRIP USDC if the caller is the owner, at most once per
+     *         COOLDOWN, if the caller is not a contract
      */
     function claim() external {
         // One claim needs one funded account: a contract could otherwise claim from many fresh addresses at once
@@ -127,6 +134,7 @@ contract TestnetFaucet is Ownable {
         lastClaim[msg.sender] = block.timestamp;
 
         DEXY.mint(msg.sender, DEXY_DRIP);
+        if (msg.sender == owner()) USDC.mint(msg.sender, OWNER_USDC_DRIP);
 
         emit Claimed(msg.sender);
     }

@@ -4,8 +4,8 @@ import { formatTime } from './format'
 
 /** OpenZeppelin 4.9 reverts with strings: the tokens' ERC20 checks, Ownable and SafeCast */
 const reasons: Record<string, string> = {
-  'ERC20: insufficient allowance': 'The staking contract is not approved to move this much DEXY yet. Approve it first.',
-  'ERC20: transfer amount exceeds balance': 'Your DEXY balance is too low for this amount.',
+  'ERC20: insufficient allowance': 'The staking contract is not approved to move this amount yet. Approve it first.',
+  'ERC20: transfer amount exceeds balance': 'Your wallet balance is too low for this amount.',
   'Ownable: caller is not the owner': 'Only the owner of the contract can do this.',
   "SafeCast: value doesn't fit in 128 bits": 'This amount is too large for the contract to record.',
 }
@@ -47,6 +47,10 @@ export function describeError(err: unknown): string {
       return 'There is nothing to harvest yet. Rewards accrue every second while the stream runs.'
     case 'NoStakedTokens':
       return 'You have no open stake, so there is nothing to harvest.'
+    case 'ZeroDuration':
+      return 'Enter a duration of at least one day.'
+    case 'FundingCapExceeded':
+      return 'This would take the rewards funded over the life of the contract past its cap.'
     case 'ClaimTooSoon':
       return `You claimed less than 24 hours ago. The faucet opens again for you at ${formatTime(a[1] as bigint)}.`
     case 'ClaimFromContract':

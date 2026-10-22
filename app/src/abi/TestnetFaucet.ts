@@ -52,6 +52,19 @@ export const faucetAbi = [
   },
   {
     "type": "function",
+    "name": "OWNER_USDC_DRIP",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "USDC",
     "inputs": [],
     "outputs": [

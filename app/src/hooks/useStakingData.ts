@@ -10,6 +10,8 @@ export interface StaticData {
   epochDuration: bigint
   genesis: bigint
   drip: bigint
+  /** USDC a claim hands out to the owner only */
+  ownerDrip: bigint
   cooldown: bigint
   migrationDelay: bigint
   migrationWindow: bigint
@@ -34,6 +36,8 @@ export interface AccountData {
   stakes: StakeInfo[]
   wallet: { dexy: bigint; reward: bigint; eth: bigint | undefined }
   allowance: bigint
+  /** USDC the staking contract may pull from the account, which a funding by the owner needs */
+  rewardAllowance: bigint
   nextClaimAt: bigint
 }
 
@@ -69,6 +73,7 @@ function useStatic(d: Deployment) {
       { address: d.faucet, abi: faucetAbi, functionName: 'COOLDOWN' },
       { address: d.staking, abi: stakingAbi, functionName: 'MIGRATION_DELAY' },
       { address: d.staking, abi: stakingAbi, functionName: 'MIGRATION_WINDOW' },
+      { address: d.faucet, abi: faucetAbi, functionName: 'OWNER_USDC_DRIP' },
     ]),
     { staleTime: Infinity },
   )
@@ -82,6 +87,7 @@ function useStatic(d: Deployment) {
       cooldown: r[3] as bigint,
       migrationDelay: BigInt(r[4] as number),
       migrationWindow: BigInt(r[5] as number),
+      ownerDrip: r[6] as bigint,
     }
   }, [res.data])
   return { ...res, data }
@@ -151,6 +157,7 @@ function useAccount(d: Deployment, account: Address | undefined) {
       { address: d.dexy.address, abi: tokenAbi, functionName: 'allowance', args: [user, d.staking] },
       { address: d.faucet, abi: faucetAbi, functionName: 'nextClaimAt', args: [user] },
       ...POOL_READS.map((functionName) => ({ address: d.staking, abi: stakingAbi, functionName })),
+      { address: d.reward.address, abi: tokenAbi, functionName: 'allowance', args: [user, d.staking] },
     ]),
     { enabled: !!account, refetchInterval: REFRESH_MS },
   )
@@ -200,7 +207,8 @@ function useAccount(d: Deployment, account: Address | undefined) {
       wallet: { dexy: r[1] as bigint, reward: r[2] as bigint, eth: eth.data?.value },
       allowance: r[3] as bigint,
       nextClaimAt: r[4] as bigint,
-      pool: toPool(r.slice(5)),
+      pool: toPool(r.slice(5, 5 + POOL_READS.length)),
+      rewardAllowance: r[5 + POOL_READS.length] as bigint,
     }
   }, [reads.data, stakeReads.data, stakeCount, account, eth.data?.value])
   return { data, isLoading: reads.isLoading, error: reads.error ?? stakeReads.error }

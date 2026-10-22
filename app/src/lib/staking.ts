@@ -5,6 +5,8 @@
 export const PRECISION = 10n ** 36n
 /** Precision of a level's boostP: 1e10 is 1.0x */
 export const BOOST_PRECISION = 10n ** 10n
+/** Cap on the rewards funded over the life of the contract, type(uint128).max */
+export const MAX_TOTAL_FUNDING = 2n ** 128n - 1n
 
 export interface Level {
   lockingPeriod: bigint
@@ -176,4 +178,25 @@ export function rewardsOver(pool: Pool, boosted: bigint, t: bigint, seconds: big
   const end = min(t + seconds, pool.rewardEndTime)
   if (end <= t) return 0n
   return mulDiv((end - t) * pool.rewardRate, boosted, pool.totalBoostedStake * PRECISION)
+}
+
+/**
+ * addStakingReward(amount, duration) landing at time t: the unstreamed rewards plus `amount` spread over `duration`.
+ * Owner only on the contract, which also reverts on a zero duration, after a migration and past MAX_TOTAL_FUNDING.
+ */
+export function applyFunding(pool: Pool, amount: bigint, duration: bigint, t: bigint): Pool {
+  const leftover = unstreamedScaled(pool, t)
+  const p = updatePool(pool, t)
+  return {
+    ...p,
+    rewardRate: (leftover + amount * PRECISION) / duration,
+    rewardEndTime: t + duration,
+    unallocatedRewards: 0n,
+  }
+}
+
+/** Reward token units the stream pays out over the day from t, rounded down, whoever is staked */
+export function streamedOverDay(pool: Pool, t: bigint): bigint {
+  if (t >= pool.rewardEndTime) return 0n
+  return ((min(pool.rewardEndTime, t + 86_400n) - t) * pool.rewardRate) / PRECISION
 }

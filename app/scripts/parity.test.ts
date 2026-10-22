@@ -22,6 +22,7 @@ import { waitForOutcome } from '../src/lib/receipt'
 import { faucetAbi, stakingAbi, tokenAbi } from '../src/lib/abi'
 import {
   PRECISION,
+  applyFunding,
   applyHarvest,
   applyStake,
   applyUnstake,
@@ -51,13 +52,15 @@ interface LocalDeployment {
   rewardToken: Address
 }
 
-describe.skipIf(!rpc)('parity with the contracts on a local chain', () => {
+describe.skipIf(!rpc)('parity with the contracts on a local chain', { timeout: 30_000 }, () => {
   // Read lazily: the local deployment file is not committed, and a skipped suite still gets collected.
   let d: LocalDeployment
   let epochs: Epochs
   let snapshot: Hex
-  const pub = createPublicClient({ chain: foundry, transport: http(rpc) })
-  const wallet = createWalletClient({ chain: foundry, transport: http(rpc) })
+  // viem polls every 4 seconds by default; anvil can return a hash just before it mines the block, so a receipt wait
+  // could take that long and the tests with several transactions would run past their timeout
+  const pub = createPublicClient({ chain: foundry, transport: http(rpc), pollingInterval: 100 })
+  const wallet = createWalletClient({ chain: foundry, transport: http(rpc), pollingInterval: 100 })
 
   beforeAll(async () => {
     d = JSON.parse(readFileSync(new URL('../src/config/deployments/31337.json', import.meta.url), 'utf8'))
@@ -255,11 +258,24 @@ describe.skipIf(!rpc)('parity with the contracts on a local chain', () => {
   })
 
   it('a transaction that reverts when it lands is reported as reverted, not as unknown', async () => {
-    const config = createConfig({ chains: [foundry], transports: { [foundry.id]: http(rpc) } })
+    const config = createConfig({ chains: [foundry], transports: { [foundry.id]: http(rpc) }, pollingInterval: 100 })
     // Sent with a fixed gas limit, so the node does not refuse it: dave has no stake, so harvest reverts
     const data = encodeFunctionData({ abi: stakingAbi, functionName: 'harvest' })
     const hash = await wallet.sendTransaction({ account: dave, to: d.staking, data, gas: 200_000n, chain: foundry })
     expect(await waitForOutcome(config, hash)).toBe('reverted')
+  })
+
+  /** The owner mints, approves and funds at a pinned time; the pool must be what applyFunding predicts. */
+  async function fundAndCheck(amount: bigint, duration: bigint, at: bigint) {
+    await send(deployer, d.faucet, faucetAbi, 'mint', [d.rewardToken, deployer, amount])
+    await send(deployer, d.rewardToken, tokenAbi, 'approve', [d.staking, amount])
+    const before = await readPool()
+    await send(deployer, d.staking, stakingAbi, 'addStakingReward', [amount, duration], at)
+    expect(await readPool()).toEqual(applyFunding(before, amount, duration, at))
+  }
+
+  it('a funding mid-stream leaves the pool the app predicts', async () => {
+    await fundAndCheck(12_345_678_901n, 17n * 86_400n + 13n, (await latestTime()) + 41n)
   })
 
   it('rewards stop at the end of the stream', async () => {
@@ -272,10 +288,8 @@ describe.skipIf(!rpc)('parity with the contracts on a local chain', () => {
   })
 
   it('the unstreamed figure is what a migration moves', async () => {
-    // A fresh funding so part of a stream is left, then the 30-day delay
-    await send(deployer, d.faucet, faucetAbi, 'mint', [d.rewardToken, deployer, 1_000n * 10n ** 6n])
-    await send(deployer, d.rewardToken, tokenAbi, 'approve', [d.staking, 1_000n * 10n ** 6n])
-    await send(deployer, d.staking, stakingAbi, 'addStakingReward', [1_000n * 10n ** 6n, 365n * 86_400n])
+    // A fresh funding after the stream ended, checked against the app, so part of a stream is left; then the delay
+    await fundAndCheck(1_000n * 10n ** 6n, 365n * 86_400n, (await latestTime()) + 7n)
     await send(deployer, d.staking, stakingAbi, 'requestMigration', [deployer])
     const t = (await latestTime()) + 30n * 86_400n + 7n
     const pool = await readPool()
