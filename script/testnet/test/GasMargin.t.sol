@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
 
 import {DeployTestnet} from "../DeployTestnet.s.sol";
 import {TestnetFaucet, TestnetToken} from "../TestnetFaucet.sol";
@@ -10,15 +11,16 @@ import {DexynthStakingV2_2} from "../../../src/DexynthStaking.sol";
 /**
  * @title GasMarginTest
  * @notice Measures the state-dependent cost the node's gas estimate can miss, and checks the app's margin covers it
- * @dev The node estimates a call at the latest block's timestamp. When another call already updated the pool in that
+ * @dev A node can estimate a call at the latest block's timestamp. When another call already updated the pool in that
  *      block, _updatePool returns early in the estimate; when the user was also settled in that block, so does
- *      _settle. One block later both write, so the landed call costs more than the estimate. The app sends
- *      estimate * 125 / 100 + 25,000 gas (app/src/hooks/useTx.ts). Each scenario measures the call twice from the
- *      same state, in the estimate's block and one block later, with the contract's storage cooled first so both
+ *      _settle; when the user's own harvest or unstake in that block paid the rewards, the estimate pays nothing. One
+ *      block later all of it runs, so the landed call costs more than the estimate. The app sends
+ *      estimate * 125 / 100 + 80,000 gas (app/src/hooks/useTx.ts). Each scenario measures the call twice from the
+ *      same state, in the estimate's block and one block later, with the contracts' storage cooled first so both
  *      runs pay cold access as a separate transaction would
  */
 contract GasMarginTest is Test {
-    uint256 internal constant APP_MARGIN_FIXED = 25_000;
+    uint256 internal constant APP_MARGIN_FIXED = 80_000;
 
     address internal constant ALICE = address(0xA11CE);
     address internal constant BOB = address(0xB0B);
@@ -69,6 +71,46 @@ contract GasMarginTest is Test {
     function test_UnstakeAfterAnotherCallInTheSameBlock() public {
         _poke(BOB);
         _check(abi.encodeCall(DexynthStakingV2_2.unstake, (0)));
+    }
+
+    /**
+     * @dev Alice's own harvest in the estimate's block paid her rewards, so the estimate pays nothing: no transfer, no
+     *      totalHarvestedRewards write and no event. One block later all of them run
+     */
+    function test_UnstakeAfterOwnHarvestInTheSameBlock() public {
+        vm.prank(ALICE);
+        staking.harvest();
+        _check(abi.encodeCall(DexynthStakingV2_2.unstake, (0)));
+    }
+
+    /**
+     * @dev As above, and Alice moved her USDC out in that block too, so the landing transfer writes a zero balance
+     */
+    function test_UnstakeAfterOwnHarvestWithTheRewardsMovedOut() public {
+        vm.startPrank(ALICE);
+        staking.harvest();
+        IERC20 usdc = IERC20(address(faucet.USDC()));
+        usdc.transfer(BOB, usdc.balanceOf(ALICE));
+        vm.stopPrank();
+        _check(abi.encodeCall(DexynthStakingV2_2.unstake, (0)));
+    }
+
+    /**
+     * @dev Two unlocked stakes withdrawn one after the other: the second is estimated in the block of the first
+     */
+    function test_UnstakeAfterOwnUnstakeInTheSameBlock() public {
+        vm.prank(ALICE);
+        staking.stake(1_000e18, 0);
+        vm.warp(block.timestamp + 2 days);
+        vm.prank(ALICE);
+        staking.unstake(0);
+        _check(abi.encodeCall(DexynthStakingV2_2.unstake, (1)));
+    }
+
+    function test_HarvestAfterOwnStakeInTheSameBlock() public {
+        vm.prank(ALICE);
+        staking.stake(1_000e18, 1);
+        _check(abi.encodeCall(DexynthStakingV2_2.harvest, ()));
     }
 
     function _poke(address _user) internal {

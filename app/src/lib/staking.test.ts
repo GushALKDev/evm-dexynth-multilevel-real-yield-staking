@@ -151,9 +151,9 @@ describe('stream estimates', () => {
 })
 
 describe('gas margin', () => {
-  it('covers the 16,603 gas the estimate can miss on top of 25%', () => {
-    expect(withGasMargin(123_758n) - 123_758n).toBeGreaterThan(16_603n)
-    expect(withGasMargin(100_000n)).toBe(150_000n)
+  it('covers with its fixed part alone the 64,476 gas the estimate can miss', () => {
+    expect(withGasMargin(0n)).toBeGreaterThan(64_476n)
+    expect(withGasMargin(100_000n)).toBe(205_000n)
   })
 })
 

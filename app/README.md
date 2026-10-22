@@ -82,11 +82,13 @@ every push, against a fresh local deployment.
 
 ## Gas
 
-The node estimates gas at the latest block's timestamp. When another call already updated the pool in that block,
-the pool update is skipped in the estimate, and when the caller was settled in that block, so is the settlement;
-one block later both write. `FOUNDRY_PROFILE=testnet forge test --match-contract GasMargin -vv` measures the
-difference at up to 16,603 gas (a stake right after the caller's own harvest), and the app sends
-`estimate * 125 / 100 + 25,000` (`src/hooks/useTx.ts`).
+A node can estimate gas at the latest block's timestamp. When another call already updated the pool in that block,
+the pool update is skipped in the estimate, and when the caller was settled in that block, so is the settlement.
+When the caller's own harvest or unstake in that block already paid the rewards, the estimate pays nothing: no
+transfer and no event. One block later all of it runs. `FOUNDRY_PROFILE=testnet forge test --match-contract
+GasMargin -vv` measures the difference at up to 64,476 gas (an unstake right after the caller's own harvest, with
+the paid USDC moved out in that block), and the app sends `estimate * 125 / 100 + 80,000` (`src/hooks/useTx.ts`).
+The parity suite lands that unstake on anvil with the app's limit.
 
 ## Deploy the contracts to Base Sepolia
 

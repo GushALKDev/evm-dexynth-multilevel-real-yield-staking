@@ -35,10 +35,11 @@ import {
 } from '../src/lib/staking'
 
 const rpc = process.env.LOCAL_RPC
-// anvil's default accounts 0 (the deployer), 1 and 2, unlocked on a local node
+// anvil's default accounts 0 (the deployer), 1, 2 and 3, unlocked on a local node
 const deployer = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' as Address
 const alice = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8' as Address
 const bob = '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC' as Address
+const carol = '0x90F79bf6EB2c4f870365E785982E1f101E93b906' as Address
 
 interface LocalDeployment {
   staking: Address
@@ -224,12 +225,30 @@ describe.skipIf(!rpc)('parity with the contracts on a local chain', () => {
     const t = (await latestTime()) + 30n
     await send(bob, d.staking, stakingAbi, 'harvest', [], t)
     const data = encodeFunctionData({ abi: stakingAbi, functionName: 'stake', args: [10n ** 18n, 0] })
-    const estimate = await pub.estimateGas({ account: alice, to: d.staking, data })
+    const estimate = await pub.estimateGas({ account: alice, to: d.staking, data, blockTag: 'latest' })
     await pinNext(t + 2n)
     const hash = await wallet.sendTransaction({ account: alice, to: d.staking, data, gas: withGasMargin(estimate), chain: foundry })
     const receipt = await pub.waitForTransactionReceipt({ hash })
     expect(receipt.status).toBe('success')
     expect(receipt.gasUsed).toBeLessThanOrEqual(withGasMargin(estimate))
+  })
+
+  it('the gas margin covers an unstake estimated right after the caller harvested in the same block', async () => {
+    // A fresh account with one stake. The estimate pays nothing, since the harvest emptied storedRewards; the
+    // landing pays, transfers and emits
+    let t = (await latestTime()) + 30n
+    await send(carol, d.faucet, faucetAbi, 'claim', [], t)
+    await send(carol, d.dexy, tokenAbi, 'approve', [d.staking, 1_000n * 10n ** 18n])
+    await send(carol, d.staking, stakingAbi, 'stake', [1_000n * 10n ** 18n, 0])
+    t = (await readStake(carol, 0n)).unlockTime + 5n
+    await send(carol, d.staking, stakingAbi, 'harvest', [], t)
+    const data = encodeFunctionData({ abi: stakingAbi, functionName: 'unstake', args: [0n] })
+    // At the latest block, as a node that estimates there does: anvil's default estimate runs one second later
+    const estimate = await pub.estimateGas({ account: carol, to: d.staking, data, blockTag: 'latest' })
+    await pinNext(t + 2n)
+    const hash = await wallet.sendTransaction({ account: carol, to: d.staking, data, gas: withGasMargin(estimate), chain: foundry })
+    const receipt = await pub.waitForTransactionReceipt({ hash })
+    expect(receipt.status, `estimate ${estimate}, limit ${withGasMargin(estimate)}, used ${receipt.gasUsed}`).toBe('success')
   })
 
   it('rewards stop at the end of the stream', async () => {

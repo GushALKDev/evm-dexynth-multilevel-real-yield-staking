@@ -28,13 +28,14 @@ const CATCH_UP_TRIES = 5
 const CATCH_UP_MS = 2_000
 
 /**
- * The gas limit sent for a node estimate. The node estimates at the latest block's timestamp: when another call
+ * The gas limit sent for a node estimate. A node can estimate at the latest block's timestamp: when another call
  * already updated the pool in that block, _updatePool returns early in the estimate, and when the caller was settled
- * in it, so does _settle. One block later both write. script/testnet/test/GasMargin.t.sol measures up to 16,603 gas
- * of difference and checks that the fixed part alone covers it.
+ * in it, so does _settle. When the caller's own harvest or unstake in that block already paid the rewards, the
+ * estimate pays nothing: no transfer, no event. One block later all of them run. script/testnet/test/GasMargin.t.sol
+ * measures up to 64,476 gas of difference and checks that the fixed part alone covers it.
  */
 export function withGasMargin(estimate: bigint): bigint {
-  return (estimate * 125n) / 100n + 25_000n
+  return (estimate * 125n) / 100n + 80_000n
 }
 
 const isRevert = (err: unknown) =>
