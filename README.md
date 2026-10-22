@@ -9,7 +9,7 @@ A multi-level staking contract that pays real yield: users lock DEXY in one of s
 
 The original contract was written at Dexynth (2023-2024). v2, v2.1 and v2.2 are a later independent rework (Dec 2025 - Sep 2026) that replaces the loop-based reward logic with a reward-per-share accumulator (one per level in v2 and v2.1, a single global one in v2.2).
 
-> **Proof of concept. Not audited and not deployed.**
+> **Proof of concept. Not audited and not deployed on any mainnet.**
 
 ---
 
@@ -21,6 +21,19 @@ The original contract was written at Dexynth (2023-2024). v2, v2.1 and v2.2 are 
 - **Bounded owner powers.** A migration waits 30 days, expires after a 7-day window and can only move rewards that are not streamed yet: never staked DEXY and never rewards already accrued to stakers.
 - **Checked against the original.** A differential test shows v1 and v2.2 give every user the same share of what they pay, also when a user joins halfway.
 - **Reviewed.** Three review rounds; the tests of each finding were run against the code before its fix.
+
+---
+
+## Demo app
+
+[app/](./app) is a web app for this contract on Base Sepolia, with testnet DEXY from a faucet and a 6-decimal USDC
+stand-in as the reward token. It draws the reward stream split by boosted weight, previews every call with the
+contract's own rounding (checked to the wei against a local deployment) and lets visitors stake, harvest and
+unstake. The testnet deployment keeps the production multipliers but shortens epochs to 1 day and locks to 1 hour
+to 14 days, so a stake can be unstaked within about a day. Its tooling lives in [script/testnet/](./script/testnet)
+with its own tests. How it works, how to run it and how to deploy it: [app/README.md](./app/README.md).
+
+<!-- Live demo: https://staking-poc.gushalk.workers.dev -->
 
 ---
 
@@ -108,6 +121,21 @@ FOUNDRY_PROFILE=gas forge test && python3 gas/gas_table.py      # gas benchmarks
 ```
 
 ---
+
+## Repository layout
+
+```
+src/              the staking contract and the two test ERC20s
+test/             unit, regression, bounds, edge case, griefing, reentrancy, differential and invariant tests
+script/           the deploy script
+script/testnet/   testnet faucet, demo deployment, stream top-up and their tests (FOUNDRY_PROFILE=testnet)
+app/              the Base Sepolia demo app
+bench/            the frozen v1 contract used by the benchmarks and the differential test
+gas/              gas benchmarks against v1
+snapshots/        the gas snapshots CI regenerates and compares
+docs/             the four guides
+images/           screenshots of the original spreadsheet model, used by the design guide
+```
 
 ## Documentation
 

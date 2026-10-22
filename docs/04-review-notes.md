@@ -113,6 +113,10 @@ An independent review of the full diff found no contract bug and raised these po
 
 ## Changelog
 
+### Demo app (22 Oct 2026)
+
+A Base Sepolia demo app in `app/` and its testnet tooling in `script/testnet/`: a faucet with DEXY and USDC stand-ins, a deployment with 1-day epochs and 1 hour to 14 day locks that keeps the production multipliers, a seed staked by the faucet, a funded stream and a top-up script, with their own test suite under `FOUNDRY_PROFILE=testnet`. `script/DeployDexynthStaking.s.sol` now exposes its levels and epoch length for reuse, with the same values. The staking contract is unchanged. See [app/README.md](../app/README.md).
+
 ### v2.2 (Sep 2026)
 
 Fixes for the round 1 review findings, per-user reward accounting with a single reward-per-share accumulator, migration redesign, precision and funding bounds, two-step ownership, stake events with index and level, a rewritten test suite (exact expectations, solvency and conservation invariants in two campaigns, reentrancy, bounds, edge case, griefing and event tests), a gas harness against v1, CI, dependencies as pinned submodules and an MIT license. See the review notes above and the [changes for users](./01-design.md#changes-for-users-from-v21-to-v22).
