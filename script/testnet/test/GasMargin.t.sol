@@ -90,7 +90,7 @@ contract GasMarginTest is Test {
         vm.startPrank(ALICE);
         staking.harvest();
         IERC20 usdc = IERC20(address(faucet.USDC()));
-        usdc.transfer(BOB, usdc.balanceOf(ALICE));
+        assertTrue(usdc.transfer(BOB, usdc.balanceOf(ALICE)));
         vm.stopPrank();
         _check(abi.encodeCall(DexynthStakingV2_2.unstake, (0)));
     }

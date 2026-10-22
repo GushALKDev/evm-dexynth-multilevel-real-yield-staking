@@ -254,7 +254,7 @@ contract DeployTestnetTest is Test {
             vm.warp(block.timestamp + 2);
             staking.stake(2, 0);
         }
-        dexy.transfer(address(staking), 1_000e18);
+        assertTrue(dexy.transfer(address(staking), 1_000e18));
         vm.stopPrank();
 
         _claimAndStake(VISITOR, 1_000e18, 0);
