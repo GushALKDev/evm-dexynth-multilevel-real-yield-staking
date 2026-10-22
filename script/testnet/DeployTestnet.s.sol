@@ -144,7 +144,7 @@ contract DeployTestnet is DeployDexynthStaking {
         uint256 drip = _faucet.DEXY_DRIP();
         IERC20 usdc = IERC20(address(_faucet.USDC()));
 
-        vm.startPrank(visitor);
+        vm.startPrank(visitor, visitor);
         _faucet.claim();
         _faucet.DEXY().approve(address(_staking), drip);
         _staking.stake(drip, 0);

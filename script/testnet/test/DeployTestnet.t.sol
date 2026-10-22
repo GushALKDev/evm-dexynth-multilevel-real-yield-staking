@@ -195,7 +195,7 @@ contract DeployTestnetTest is Test {
     }
 
     function test_StakeFailures() public {
-        vm.startPrank(VISITOR);
+        vm.startPrank(VISITOR, VISITOR);
         faucet.claim();
         // 1 wei at 0.65x boosts to zero
         dexy.approve(address(staking), type(uint256).max);
@@ -247,7 +247,7 @@ contract DeployTestnetTest is Test {
      *      exact share, harvest and unstake
      */
     function test_DustStakesAndDonationsDoNotBlockVisitors() public {
-        vm.startPrank(GRIEFER);
+        vm.startPrank(GRIEFER, GRIEFER);
         faucet.claim();
         dexy.approve(address(staking), type(uint256).max);
         for (uint256 i = 0; i < 50; i++) {
@@ -287,7 +287,7 @@ contract DeployTestnetTest is Test {
     //////////////////////////////////////////////////////////////*/
 
     function _claimAndStake(address _user, uint256 _amount, uint8 _level) internal {
-        vm.startPrank(_user);
+        vm.startPrank(_user, _user);
         faucet.claim();
         dexy.approve(address(staking), _amount);
         staking.stake(_amount, _level);

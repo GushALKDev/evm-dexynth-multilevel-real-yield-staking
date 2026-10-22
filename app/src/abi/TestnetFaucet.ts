@@ -221,6 +221,17 @@ export const faucetAbi = [
   },
   {
     "type": "error",
+    "name": "ClaimFromContract",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ClaimTooSoon",
     "inputs": [
       {

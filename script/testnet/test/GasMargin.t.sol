@@ -37,7 +37,7 @@ contract GasMarginTest is Test {
         dexy = faucet.DEXY();
         address[2] memory users = [ALICE, BOB];
         for (uint256 i = 0; i < users.length; i++) {
-            vm.startPrank(users[i]);
+            vm.startPrank(users[i], users[i]);
             faucet.claim();
             dexy.approve(address(staking), type(uint256).max);
             staking.stake(1_000e18, 0);

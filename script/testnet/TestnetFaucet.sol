@@ -52,9 +52,10 @@ interface ISeedTarget {
  * @title TestnetFaucet
  * @notice Deploys the two testnet tokens of the demo, DEXY (18 decimals) and USDC (6 decimals, the reward token),
  *         and hands out DEXY_DRIP DEXY once a day per address. Testnet only
- * @dev What it checks: one claim per address per COOLDOWN, and only the owner can mint freely or seed stakes. What it
- *      does not check: the daily limit is per address, so it does not stop someone using many addresses. The reward
- *      token is not handed out, users only earn it. Stakes made through seedStake belong to this contract, which has
+ * @dev What it checks: one claim per address per COOLDOWN, claims only from externally owned accounts (so one
+ *      transaction cannot claim through many fresh contracts), and only the owner can mint freely or seed stakes. What
+ *      it does not check: the limit is per account, so someone funding many accounts can claim many times. Smart
+ *      contract wallets cannot claim. The reward token is not handed out, users only earn it. Stakes made through seedStake belong to this contract, which has
  *      no function to unstake or harvest them, so the seeded DEXY stays staked for good and the rewards it earns stay
  *      in the staking contract
  */
@@ -63,6 +64,11 @@ contract TestnetFaucet is Ownable {
      * @notice The caller claimed less than COOLDOWN ago
      */
     error ClaimTooSoon(address account, uint256 nextClaimAt);
+
+    /**
+     * @notice The caller is a contract: claims come straight from an externally owned account
+     */
+    error ClaimFromContract(address caller);
 
     /**
      * @notice The token is not one of the two this faucet deployed
@@ -111,9 +117,11 @@ contract TestnetFaucet is Ownable {
     }
 
     /**
-     * @notice Sends DEXY_DRIP DEXY to the caller, at most once per COOLDOWN
+     * @notice Sends DEXY_DRIP DEXY to the caller, at most once per COOLDOWN, if the caller is not a contract
      */
     function claim() external {
+        // One claim needs one funded account: a contract could otherwise claim from many fresh addresses at once
+        if (msg.sender != tx.origin) revert ClaimFromContract(msg.sender);
         uint256 next = nextClaimAt(msg.sender);
         if (block.timestamp < next) revert ClaimTooSoon(msg.sender, next);
         lastClaim[msg.sender] = block.timestamp;

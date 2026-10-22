@@ -49,6 +49,8 @@ export function describeError(err: unknown): string {
       return 'You have no open stake, so there is nothing to harvest.'
     case 'ClaimTooSoon':
       return `You already claimed today. The faucet opens again for you at ${formatTime(a[1] as bigint)}.`
+    case 'ClaimFromContract':
+      return 'The faucet only hands out tokens to regular accounts, not to contracts or smart contract wallets.'
     case 'OnlyMinter':
       return 'Only the faucet can mint the testnet tokens.'
   }

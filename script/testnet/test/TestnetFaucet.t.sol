@@ -8,6 +8,16 @@ import {DexynthStakingV2_2} from "../../../src/DexynthStaking.sol";
 import {DeployTestnet} from "../DeployTestnet.s.sol";
 
 /**
+ * @dev Claims through throwaway contracts, each a fresh address, in one transaction
+ */
+contract Farmer {
+    constructor(TestnetFaucet _faucet, address _to) {
+        _faucet.claim();
+        _faucet.DEXY().transfer(_to, _faucet.DEXY_DRIP());
+    }
+}
+
+/**
  * @title TestnetFaucetTest
  * @notice The faucet's daily limit, its owner-only functions and what a stranger can and cannot do with it
  * @dev Run with FOUNDRY_PROFILE=testnet
@@ -37,7 +47,7 @@ contract TestnetFaucetTest is Test {
     }
 
     function test_ClaimSendsTheDripOnly() public {
-        vm.prank(ALICE);
+        vm.prank(ALICE, ALICE);
         faucet.claim();
         assertEq(dexy.balanceOf(ALICE), 10_000e18);
         assertEq(usdc.balanceOf(ALICE), 0);
@@ -45,19 +55,37 @@ contract TestnetFaucetTest is Test {
     }
 
     function test_SecondClaimWithinADayReverts() public {
-        vm.prank(ALICE);
+        vm.prank(ALICE, ALICE);
         faucet.claim();
         uint256 next = block.timestamp + 1 days;
 
         vm.warp(next - 1);
         vm.expectRevert(abi.encodeWithSelector(TestnetFaucet.ClaimTooSoon.selector, ALICE, next));
-        vm.prank(ALICE);
+        vm.prank(ALICE, ALICE);
         faucet.claim();
 
         vm.warp(next);
-        vm.prank(ALICE);
+        vm.prank(ALICE, ALICE);
         faucet.claim();
         assertEq(dexy.balanceOf(ALICE), 20_000e18);
+    }
+
+    function test_ContractsCannotClaim() public {
+        vm.expectRevert(abi.encodeWithSelector(TestnetFaucet.ClaimFromContract.selector, address(this)));
+        faucet.claim();
+    }
+
+    /**
+     * @dev Without the check, 100 contracts claimed the whole seed's worth of DEXY in one transaction
+     */
+    function test_ClaimsCannotBeFarmedThroughContracts() public {
+        vm.startPrank(GRIEFER, GRIEFER);
+        for (uint256 i = 0; i < 3; i++) {
+            vm.expectRevert();
+            new Farmer(faucet, GRIEFER);
+        }
+        vm.stopPrank();
+        assertEq(dexy.balanceOf(GRIEFER), 0);
     }
 
     function test_NobodyButTheFaucetMintsTokens() public {

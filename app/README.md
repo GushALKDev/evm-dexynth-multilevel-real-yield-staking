@@ -29,10 +29,11 @@ other external dependency, so the only stand-ins are the tokens and the demo con
 `script/testnet/`:
 
 - **`TestnetFaucet` and `TestnetToken`.** The faucet deploys DEXY (18 decimals) and a USDC stand-in (6 decimals,
-  the reward token), and only the faucet can mint either. It hands out 10,000 DEXY per address, once a day.
-  What it checks: the daily limit per address, and that only its owner mints freely or seeds stakes. What it does
-  not check: the limit is per address, so someone with many addresses can claim many times. USDC is not handed out;
-  it is only earned by staking.
+  the reward token), and only the faucet can mint either. It hands out 10,000 DEXY per account, once every 24
+  hours. What it checks: the limit per account, that claims come straight from an externally owned account (so one
+  transaction cannot claim through many fresh contracts), and that only its owner mints freely or seeds stakes.
+  What it does not check: someone who funds many accounts can claim with each. Smart contract wallets cannot claim.
+  USDC is not handed out; it is only earned by staking.
 - **The seed.** Before the stream starts, the faucet contract stakes 1,000,000 DEXY across the five levels
   (100,000, 150,000, 250,000, 250,000 and 250,000). The faucet has no function to unstake or harvest, so the pool
   never empties and no dust stake can be alone in it when the stream starts. The rewards that seed earns stay in
