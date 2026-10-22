@@ -34,7 +34,9 @@ function Summary({ model, acc }: { model: StakingModel; acc: AccountView }) {
           {hasStake
             ? model.stream.active
               ? `About ${formatFixed(acc.perDay, d.reward.decimals, 2)} USDC a day at today's pool, ${formatPct(acc.share, 2)} of the stream. Rewards accrue every second.`
-              : 'The stream has ended, so your stakes earn nothing until the owner funds it again.'
+              : model.live.migrated
+                ? 'The owner migrated the rewards not streamed yet, so your stakes earn nothing more. You can harvest what has accrued and withdraw every stake.'
+                : 'The stream has ended, so your stakes earn nothing until the owner funds it again.'
             : 'Stake DEXY below to start earning a share of the stream.'}
         </span>
       </div>
@@ -97,7 +99,7 @@ function StakeForm({ model, acc }: { model: StakingModel; acc: AccountView }) {
   const a = amount ?? 0n
 
   // Projected to the visitor's clock, the closest guess for when the call lands
-  const after = applyStake(model.pool, acc.user, model.epochs, level, a, model.now)
+  const after = applyStake(acc.pool, acc.user, model.epochs, level, a, model.now)
   const shareAfter = after.pool.totalBoostedStake > 0n ? (after.user.boostedBalance * ONE) / after.pool.totalBoostedStake : 0n
   const perDayAfter = rewardsOver(after.pool, after.user.boostedBalance, model.now, DAY)
   const epochTurnsSoon = model.nextEpochAt - model.now <= EPOCH_WARNING_SECONDS
@@ -254,8 +256,8 @@ function StakeForm({ model, acc }: { model: StakingModel; acc: AccountView }) {
 function UnstakePreview({ model, acc, stake, onDone }: { model: StakingModel; acc: AccountView; stake: StakeInfo; onDone: () => void }) {
   const d = model.deployment
   const { run, busy } = useTx()
-  // At the latest block's timestamp: the least the call pays when it lands
-  const after = applyUnstake(model.pool, acc.user, stake, model.chainTime)
+  // At the latest block's timestamp, from the pool read with the account: about what the call pays when it lands
+  const after = applyUnstake(acc.pool, acc.user, stake, model.chainTime)
   const shareAfter = after.pool.totalBoostedStake > 0n ? (after.user.boostedBalance * ONE) / after.pool.totalBoostedStake : 0n
   return (
     <div className="unstake-preview">
@@ -268,7 +270,7 @@ function UnstakePreview({ model, acc, stake, onDone }: { model: StakingModel; ac
           <dd>{formatFixed(after.principal, d.dexy.decimals, d.dexy.shown)}</dd>
         </div>
         <div className="row">
-          <dt>USDC paid, at least</dt>
+          <dt>USDC paid, about</dt>
           <dd>{formatFixed(after.rewards, d.reward.decimals, 6)}</dd>
         </div>
         <div className="row">
@@ -449,7 +451,7 @@ export function AccountCard({ model, onConnect, onFaucet }: { model: StakingMode
             </p>
             <p>
               New here? The faucet gives you {formatFixed(model.static.drip, d.dexy.decimals, 0)} DEXY on {chain.name},
-              once a day.
+              once every 24 hours.
             </p>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button className="btn btn-primary" onClick={onConnect}>

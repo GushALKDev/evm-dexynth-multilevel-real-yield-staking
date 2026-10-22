@@ -29,6 +29,8 @@ export interface LiveData {
 
 export interface AccountData {
   user: UserState
+  /** The pool as of the same block as the user, read in the same call: the account's figures need both together */
+  pool: Pool
   stakes: StakeInfo[]
   wallet: { dexy: bigint; reward: bigint; eth: bigint | undefined }
   allowance: bigint
@@ -85,16 +87,31 @@ function useStatic(d: Deployment) {
   return { ...res, data }
 }
 
+const POOL_READS = [
+  'rewardRate',
+  'totalBoostedStake',
+  'accRewardPerBoostedShare',
+  'unallocatedRewards',
+  'lastRewardTime',
+  'rewardEndTime',
+] as const
+
+function toPool(r: readonly unknown[]): Pool {
+  return {
+    rewardRate: r[0] as bigint,
+    totalBoostedStake: r[1] as bigint,
+    accRewardPerBoostedShare: r[2] as bigint,
+    unallocatedRewards: r[3] as bigint,
+    lastRewardTime: BigInt(r[4] as number),
+    rewardEndTime: BigInt(r[5] as number),
+  }
+}
+
 function useLive(d: Deployment) {
   const read = (functionName: string) => ({ address: d.staking, abi: stakingAbi, functionName })
   const res = useReads(
     asReads([
-      read('rewardRate'),
-      read('totalBoostedStake'),
-      read('accRewardPerBoostedShare'),
-      read('unallocatedRewards'),
-      read('lastRewardTime'),
-      read('rewardEndTime'),
+      ...POOL_READS.map(read),
       read('getLevels'),
       read('totalRewardsFunded'),
       read('migrated'),
@@ -110,14 +127,7 @@ function useLive(d: Deployment) {
     if (!r) return undefined
     const levels = r[6] as readonly { lockingPeriod: number; boostP: bigint; totalStaked: bigint }[]
     return {
-      pool: {
-        rewardRate: r[0] as bigint,
-        totalBoostedStake: r[1] as bigint,
-        accRewardPerBoostedShare: r[2] as bigint,
-        unallocatedRewards: r[3] as bigint,
-        lastRewardTime: BigInt(r[4] as number),
-        rewardEndTime: BigInt(r[5] as number),
-      },
+      pool: toPool(r),
       levels: levels.map((l) => ({ lockingPeriod: BigInt(l.lockingPeriod), boostP: BigInt(l.boostP), totalStaked: BigInt(l.totalStaked) })),
       totalRewardsFunded: BigInt(r[7] as bigint),
       migrated: r[8] as boolean,
@@ -140,6 +150,7 @@ function useAccount(d: Deployment, account: Address | undefined) {
       { address: d.reward.address, abi: tokenAbi, functionName: 'balanceOf', args: [user] },
       { address: d.dexy.address, abi: tokenAbi, functionName: 'allowance', args: [user, d.staking] },
       { address: d.faucet, abi: faucetAbi, functionName: 'nextClaimAt', args: [user] },
+      ...POOL_READS.map((functionName) => ({ address: d.staking, abi: stakingAbi, functionName })),
     ]),
     { enabled: !!account, refetchInterval: REFRESH_MS },
   )
@@ -189,6 +200,7 @@ function useAccount(d: Deployment, account: Address | undefined) {
       wallet: { dexy: r[1] as bigint, reward: r[2] as bigint, eth: eth.data?.value },
       allowance: r[3] as bigint,
       nextClaimAt: r[4] as bigint,
+      pool: toPool(r.slice(5)),
     }
   }, [reads.data, stakeReads.data, stakeCount, account, eth.data?.value])
   return { data, isLoading: reads.isLoading, error: reads.error ?? stakeReads.error }

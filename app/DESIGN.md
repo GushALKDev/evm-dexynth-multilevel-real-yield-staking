@@ -77,9 +77,10 @@ least 34 px wide and drops the level names below 480 px, leaving the multipliers
   that says DEXY staked.
 - Every preview shows before and after, computed with the contract's own rounding
   (`src/lib/staking.ts`): boosted weight, share of the stream, unlock time, rewards paid.
-- Figures that tick (rewards, the streamed total) project to the visitor's clock, never behind the
-  latest block. Anything a call depends on (whether a stake is unlocked, what an unstake pays at least,
-  whether the faucet opens) uses the latest block's timestamp.
+- Figures that tick (rewards, the streamed total) project to the visitor's clock, kept between the
+  latest block's timestamp and 30 seconds past it. Anything a call depends on (whether a stake is
+  unlocked, what an unstake pays, whether the faucet opens) uses the latest block's timestamp, and the
+  account's figures use the pool read in the same call as the account.
 - Errors say what happened and what to do, decoded from the contracts' custom errors and from
   OpenZeppelin 4.9's revert strings.
 - Motion only where something changed: the split's blocks ease to new widths and heights, rewards tick.

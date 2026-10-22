@@ -89,7 +89,8 @@ export function HowItWorks({ model }: { model: StakingModel }) {
               The contract keeps one number: the reward per boosted unit accumulated since deployment. Every stake,
               unstake, harvest, funding and migration first adds the time since the last update times the reward rate,
               divided by the total boosted stake. Your rewards are your boosted balance times how far that number has
-              moved since you were last settled, rounded down. No call loops over stakes, levels or epochs.
+              moved since you were last settled, rounded down. Stake, unstake and harvest do not loop over stakes, levels
+              or epochs.
             </p>
           </div>
           <div className="mechanic">
@@ -114,7 +115,7 @@ export function HowItWorks({ model }: { model: StakingModel }) {
             <h3>The owner funds a stream, and little else</h3>
             <p>
               The owner funds the stream with addStakingReward: the new amount plus whatever the current stream has not
-              paid out yet is spread evenly over a new duration. Time with nobody staked is set aside and rolled into the
+              streamed yet is spread evenly over a new duration. Time with nobody staked is set aside and rolled into the
               next funding. The owner can also migrate the rewards not streamed yet, after a delay of{' '}
               {formatDuration(st.migrationDelay)} and within a window of {formatDuration(st.migrationWindow)}; that
               closes new stakes and lifts every lock. There is no pause, and no function that moves a staker's DEXY or
@@ -140,8 +141,8 @@ export function HowItWorks({ model }: { model: StakingModel }) {
               <a href={explorerAddress(d.faucet)} target="_blank" rel="noreferrer">
                 faucet contract
               </a>
-              , with no value. The faucet hands out {formatFixed(st.drip, d.dexy.decimals, 0)} DEXY per address once a
-              day. USDC is only earned.
+              , with no value. The faucet hands out {formatFixed(st.drip, d.dexy.decimals, 0)} DEXY per account once
+              every 24 hours. USDC is only earned.
             </li>
             <li>
               Epochs last {formatDuration(model.epochs.duration)}, the shortest the contract accepts, and the locks run

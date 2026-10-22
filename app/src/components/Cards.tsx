@@ -114,7 +114,9 @@ export function StreamCard({ model }: { model: StakingModel }) {
               ? 'Executed'
               : model.migrationPending
                 ? `Requested, executable from ${formatTime(executeFrom)}`
-                : 'None requested'}
+                : live.migrationRequestTime > 0n
+                  ? 'Last request expired unexecuted'
+                  : 'None requested'}
           </dd>
         </div>
       </dl>

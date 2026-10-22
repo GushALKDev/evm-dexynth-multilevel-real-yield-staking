@@ -16,7 +16,7 @@ Proof of concept, not audited, for educational purposes. The tokens are testnet 
   contract's own formulas and rounding (`src/lib/staking.ts`), checked to the wei against a local deployment
   (`scripts/parity.test.ts`).
 - **Previews before every call.** A stake shows the boosted weight, the share of the stream and the unlock time
-  before and after; an unstake shows the DEXY returned and the least it pays in USDC. Each call is simulated before
+  before and after; an unstake shows the DEXY returned and about what it pays in USDC. Each call is simulated before
   the wallet asks for a signature, so a revert arrives as a sentence (`src/lib/errors.ts`) instead of a failed
   transaction.
 - **Levels and the epoch clock.** What 1,000 DEXY staked now would earn a day at each level, at today's pool, and

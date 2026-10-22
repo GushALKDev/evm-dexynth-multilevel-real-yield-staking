@@ -67,3 +67,61 @@ function loadFixtureDeployment(): Deployment {
     reward: token('USDC', 6),
   }
 }
+
+describe('migration status', () => {
+  const d = loadFixtureDeployment()
+  const st = { epochDuration: 86_400n, genesis: 1_000n, drip: 10n ** 22n, cooldown: 86_400n, migrationDelay: 2_592_000n, migrationWindow: 604_800n }
+  const base = (over: Partial<LiveData>): LiveData => ({
+    pool: { rewardRate: 0n, totalBoostedStake: 1n, accRewardPerBoostedShare: 0n, unallocatedRewards: 0n, lastRewardTime: 10_000n, rewardEndTime: 10_000n },
+    levels: [{ lockingPeriod: 3_600n, boostP: 10n ** 10n, totalStaked: 1n }],
+    totalRewardsFunded: 0n,
+    migrated: false,
+    migrationRequestTime: 10_000n,
+    pendingMigrationAddress: '0x0000000000000000000000000000000000000005',
+    owner: '0x0000000000000000000000000000000000000001',
+    faucetStaked: 1n,
+    ...over,
+  })
+
+  it('is pending until the execution window closes', () => {
+    const end = 10_000n + st.migrationDelay + st.migrationWindow
+    expect(buildModel(d, st, base({}), undefined, end, end).migrationPending).toBe(true)
+  })
+
+  it('is not pending once the request has expired', () => {
+    const after = 10_000n + st.migrationDelay + st.migrationWindow + 1n
+    expect(buildModel(d, st, base({}), undefined, after, after).migrationPending).toBe(false)
+  })
+})
+
+describe('account figures', () => {
+  it('come from the pool read in the same call as the account, not from a staler pool read', () => {
+    const d = loadFixtureDeployment()
+    const st = { epochDuration: 86_400n, genesis: 1_000n, drip: 10n ** 22n, cooldown: 86_400n, migrationDelay: 1n, migrationWindow: 1n }
+    const stale = { rewardRate: 10n ** 36n, totalBoostedStake: 10n ** 18n, accRewardPerBoostedShare: 5n * 10n ** 18n, unallocatedRewards: 0n, lastRewardTime: 1_000n, rewardEndTime: 10n ** 9n }
+    const fresh = { ...stale, accRewardPerBoostedShare: 9n * 10n ** 18n, lastRewardTime: 1_100n }
+    const live: LiveData = {
+      pool: stale,
+      levels: [{ lockingPeriod: 3_600n, boostP: 10n ** 10n, totalStaked: 10n ** 18n }],
+      totalRewardsFunded: 0n,
+      migrated: false,
+      migrationRequestTime: 0n,
+      pendingMigrationAddress: '0x0000000000000000000000000000000000000000',
+      owner: '0x0000000000000000000000000000000000000001',
+      faucetStaked: 0n,
+    }
+    const user = { stakeCount: 1n, storedRewards: 0n, totalStakedDexy: 10n ** 18n, boostedBalance: 10n ** 18n, totalHarvestedRewards: 0n, accRewardSnapshot: fresh.accRewardPerBoostedShare }
+    const account = { user, pool: fresh, stakes: [], wallet: { dexy: 0n, reward: 0n, eth: 1n }, allowance: 0n, nextClaimAt: 0n }
+    const m = buildModel(d, st, live, account as never, 1_100n, 1_100n)
+    expect(m.account!.pending).toBe(0n)
+    expect(m.account!.pendingAtChain).toBe(0n)
+  })
+})
+
+describe('projection times with a fast clock', () => {
+  it('tick at most 30 seconds past the latest block', () => {
+    const t = projectionTimes(5_000n, 1_000n, 900n)
+    expect(t.now).toBe(1_030n)
+    expect(t.chainTime).toBe(1_000n)
+  })
+})

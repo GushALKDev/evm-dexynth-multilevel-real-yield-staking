@@ -8,8 +8,9 @@ import { TokenIcon } from './icons'
 import { Dialog } from './Wallet'
 
 export function FaucetDialog({ model, onClose, onConnect }: { model: StakingModel; onClose: () => void; onConnect: () => void }) {
-  const { address } = useConnection()
+  const { address, chainId } = useConnection()
   const { run, busy } = useTx()
+  const wrongNetwork = !!address && chainId !== chain.id
   const watch = useWatchAsset()
   const d = model.deployment
   const acc = model.account
@@ -25,8 +26,8 @@ export function FaucetDialog({ model, onClose, onConnect }: { model: StakingMode
   return (
     <Dialog title="Test tokens" onClose={onClose}>
       <p className="muted">
-        The faucet hands out testnet DEXY with no value, once a day per address. USDC, the reward token, is only earned
-        by staking. Transactions also need a little {chain.name} ETH for gas.
+        The faucet hands out testnet DEXY with no value, once every 24 hours per account. USDC, the reward token, is
+        only earned by staking. Transactions also need a little {chain.name} ETH for gas.
       </p>
       <div className="rows" style={{ margin: '14px 0 18px' }}>
         <div className="row">
@@ -42,6 +43,8 @@ export function FaucetDialog({ model, onClose, onConnect }: { model: StakingMode
         <button className="btn btn-primary btn-block" onClick={onConnect}>
           Connect wallet
         </button>
+      ) : wrongNetwork ? (
+        <p className="muted">Your wallet is on another network. Switch to {chain.name} from the button at the top.</p>
       ) : (
         <div className="steps">
           {noGas ? (
@@ -60,11 +63,13 @@ export function FaucetDialog({ model, onClose, onConnect }: { model: StakingMode
           >
             {busy ? 'Claiming…' : 'Claim test DEXY'}
           </button>
-          {!canClaim && acc ? <p className="hint">You already claimed today. Next claim after {formatTime(next)}.</p> : null}
+          {!canClaim && acc ? (
+            <p className="hint">You claimed less than 24 hours ago. The faucet opens again for you at {formatTime(next)}.</p>
+          ) : null}
         </div>
       )}
 
-      {address && acc ? (
+      {address && acc && !wrongNetwork ? (
         <div className="rows" style={{ marginTop: 18 }}>
           {tokens.map(({ info, balance }) => (
             <div className="row" key={info.symbol}>

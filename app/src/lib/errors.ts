@@ -48,7 +48,7 @@ export function describeError(err: unknown): string {
     case 'NoStakedTokens':
       return 'You have no open stake, so there is nothing to harvest.'
     case 'ClaimTooSoon':
-      return `You already claimed today. The faucet opens again for you at ${formatTime(a[1] as bigint)}.`
+      return `You claimed less than 24 hours ago. The faucet opens again for you at ${formatTime(a[1] as bigint)}.`
     case 'ClaimFromContract':
       return 'The faucet only hands out tokens to regular accounts, not to contracts or smart contract wallets.'
     case 'OnlyMinter':
