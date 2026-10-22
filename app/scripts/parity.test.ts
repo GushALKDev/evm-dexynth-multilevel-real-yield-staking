@@ -16,7 +16,9 @@ import {
 } from 'viem'
 import { foundry } from 'viem/chains'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { createConfig } from 'wagmi'
 import { withGasMargin } from '../src/hooks/useTx'
+import { waitForOutcome } from '../src/lib/receipt'
 import { faucetAbi, stakingAbi, tokenAbi } from '../src/lib/abi'
 import {
   PRECISION,
@@ -35,11 +37,12 @@ import {
 } from '../src/lib/staking'
 
 const rpc = process.env.LOCAL_RPC
-// anvil's default accounts 0 (the deployer), 1, 2 and 3, unlocked on a local node
+// anvil's default accounts 0 (the deployer) and 1 to 4, unlocked on a local node
 const deployer = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' as Address
 const alice = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8' as Address
 const bob = '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC' as Address
 const carol = '0x90F79bf6EB2c4f870365E785982E1f101E93b906' as Address
+const dave = '0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65' as Address
 
 interface LocalDeployment {
   staking: Address
@@ -249,6 +252,14 @@ describe.skipIf(!rpc)('parity with the contracts on a local chain', () => {
     const hash = await wallet.sendTransaction({ account: carol, to: d.staking, data, gas: withGasMargin(estimate), chain: foundry })
     const receipt = await pub.waitForTransactionReceipt({ hash })
     expect(receipt.status, `estimate ${estimate}, limit ${withGasMargin(estimate)}, used ${receipt.gasUsed}`).toBe('success')
+  })
+
+  it('a transaction that reverts when it lands is reported as reverted, not as unknown', async () => {
+    const config = createConfig({ chains: [foundry], transports: { [foundry.id]: http(rpc) } })
+    // Sent with a fixed gas limit, so the node does not refuse it: dave has no stake, so harvest reverts
+    const data = encodeFunctionData({ abi: stakingAbi, functionName: 'harvest' })
+    const hash = await wallet.sendTransaction({ account: dave, to: d.staking, data, gas: 200_000n, chain: foundry })
+    expect(await waitForOutcome(config, hash)).toBe('reverted')
   })
 
   it('rewards stop at the end of the stream', async () => {

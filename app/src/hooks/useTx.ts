@@ -2,10 +2,11 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useState } from 'react'
 import type { Abi, Address } from 'viem'
 import { useConnection } from 'wagmi'
-import { estimateGas, simulateContract, waitForTransactionReceipt, writeContract } from 'wagmi/actions'
+import { estimateGas, simulateContract, writeContract } from 'wagmi/actions'
 import { BaseError, ContractFunctionRevertedError, encodeFunctionData, ExecutionRevertedError } from 'viem'
 import { explorerTx } from '../config/chain'
 import { describeError } from '../lib/errors'
+import { waitForOutcome } from '../lib/receipt'
 import { wagmiConfig } from '../wagmi'
 import { useToasts } from './useToasts'
 
@@ -83,20 +84,21 @@ export function useTx() {
         toasts.update(id, { body: 'Confirm it in your wallet.' })
         const hash = await writeContract(wagmiConfig, { ...(request as object), gas } as never)
         toasts.update(id, { body: 'Waiting for the block…', href: explorerTx(hash) })
-        let receipt
-        try {
-          receipt = await waitForTransactionReceipt(wagmiConfig, { hash })
-        } catch {
-          // The transaction was sent, but its outcome could not be read: do not guess either way.
+        const outcome = await waitForOutcome(wagmiConfig, hash)
+        if (outcome === 'unknown' || outcome === 'cancelled') {
+          // The transaction was sent, but it did not land as sent or its outcome could not be read: do not guess.
           toasts.update(id, {
             tone: 'error',
-            title: `${label}: outcome unknown`,
-            body: 'The transaction was sent but its result could not be read from the RPC. Check it on the explorer before trying again.',
+            title: outcome === 'cancelled' ? `${label}: cancelled` : `${label}: outcome unknown`,
+            body:
+              outcome === 'cancelled'
+                ? 'Your wallet replaced the transaction with a cancellation, so nothing changed.'
+                : 'The transaction was sent but its result could not be read from the RPC. Check it on the explorer before trying again.',
           })
           await queryClient.invalidateQueries()
           return false
         }
-        if (receipt.status !== 'success') throw new LandedRevertError()
+        if (outcome === 'reverted') throw new LandedRevertError()
         toasts.update(id, { tone: 'success', title: done, body: undefined })
         await queryClient.invalidateQueries()
         return true
