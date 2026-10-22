@@ -19,7 +19,9 @@ import {TestnetFaucet} from "./TestnetFaucet.sol";
  *        days, so a visitor can unstake a level 0 stake within about a day. The multipliers are the deploy
  *        script's, read from DeployDexynthStaking._levels().
  *      - Seed: the faucet stakes SEED_TOTAL DEXY across the five levels before the stream is funded, so the pool is
- *        never empty and no dust stake can be alone in it when the stream starts. The faucet cannot unstake.
+ *        never empty and no dust stake can be alone in it when the stream starts. The faucet cannot unstake. The
+ *        seed is 50 faucet drips: while it is the only other stake, a visitor's 10,000 DEXY earns about 1.2% to 2.5%
+ *        of the stream, by level.
  *      - Stream: STREAM_AMOUNT USDC over STREAM_DURATION, funded by the deployer, who stays the owner.
  *      The protocol has no oracle or other external dependency. Before anything is sent, the script runs a smoke
  *      test in simulation: a fresh address claims, stakes, earns for an hour and harvests, and the run reverts if
@@ -57,7 +59,7 @@ contract DeployTestnet is DeployDexynthStaking {
     /**
      * @notice DEXY staked by the faucet across the five levels
      */
-    uint256 public constant SEED_TOTAL = 1_000_000e18;
+    uint256 public constant SEED_TOTAL = 500_000e18;
 
     /**
      * @notice Everything the run deploys
@@ -122,7 +124,7 @@ contract DeployTestnet is DeployDexynthStaking {
      * @notice DEXY the faucet stakes in each level, SEED_TOTAL in all
      */
     function seedAmounts() public pure returns (uint256[5] memory) {
-        return [uint256(100_000e18), 150_000e18, 250_000e18, 250_000e18, 250_000e18];
+        return [uint256(50_000e18), 75_000e18, 125_000e18, 125_000e18, 125_000e18];
     }
 
     /**

@@ -34,10 +34,10 @@ other external dependency, so the only stand-ins are the tokens and the demo con
   transaction cannot claim through many fresh contracts), and that only its owner mints freely or seeds stakes.
   What it does not check: someone who funds many accounts can claim with each. Smart contract wallets cannot claim.
   USDC is not handed out; it is only earned by staking.
-- **The seed.** Before the stream starts, the faucet contract stakes 1,000,000 DEXY across the five levels
-  (100,000, 150,000, 250,000, 250,000 and 250,000). The faucet has no function to unstake or harvest, so the pool
-  never empties and no dust stake can be alone in it when the stream starts. The rewards that seed earns stay in
-  the staking contract.
+- **The seed.** Before the stream starts, the faucet contract stakes 500,000 DEXY across the five levels (50,000,
+  75,000, 125,000, 125,000 and 125,000), 50 faucet drips. The faucet has no function to unstake or harvest, so the
+  pool never empties and no dust stake can be alone in it when the stream starts. The rewards that seed earns stay
+  in the staking contract.
 - **Time.** Epochs last 1 day, the shortest the constructor accepts, and the locks are 1 hour, 1 day, 3 days,
   7 days and 14 days instead of the deploy script's 30 to 720 days with 15-day epochs. The multipliers, 0.65x to
   1.35x, are the deploy script's, read from `DeployDexynthStaking._levels()`.
@@ -70,7 +70,7 @@ Checks:
 ```bash
 npm run typecheck
 npm test                                                   # unit tests of the staking math and the model
-LOCAL_RPC=http://127.0.0.1:8545 npx vitest run scripts     # parity against a local deployment
+LOCAL_RPC=http://127.0.0.1:8545 npx vitest run scripts     # parity, needs anvil's default mining (see below)
 node scripts/contrast.mjs                                  # the color figures in DESIGN.md
 ```
 
@@ -78,7 +78,9 @@ The parity suite checks every function the app mirrors against the contracts, to
 state each stake leaves at every level, a stake whose weight rounds to zero, pending rewards at many timestamps,
 what a harvest and an unstake pay, unlock times on both sides of an epoch boundary, the end of the stream, and the
 unstreamed amount a migration moves. It also sends a stake estimated right after another call updated the pool,
-with the app's gas margin. It reverts the chain to a snapshot when it finishes, so it can run again. CI runs it on
+with the app's gas margin. It reverts the chain to a snapshot when it finishes, so it can run again. It pins each transaction's timestamp,
+so it needs anvil to mine on every transaction, as it does by default: after `evm_setIntervalMining`, run
+`cast rpc evm_setAutomine true` first. CI runs it on
 every push, against a fresh local deployment.
 
 ## Gas
