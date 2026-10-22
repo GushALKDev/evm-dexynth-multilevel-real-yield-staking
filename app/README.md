@@ -6,7 +6,7 @@ rewards accrue every second, harvest them and unstake once the lock ends.
 
 Proof of concept, not audited, for educational purposes. The tokens are testnet stand-ins with no value.
 
-<!-- Live: https://staking-poc.gushalk.workers.dev (once deployed) -->
+Live: https://staking-poc.gushalk.workers.dev
 
 ## What it shows
 

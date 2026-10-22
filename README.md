@@ -33,7 +33,7 @@ and unstake. The testnet deployment keeps the production multipliers but shorten
 to 14 days, so a stake can be unstaked within about a day. Its tooling lives in [script/testnet/](./script/testnet)
 with its own tests. How it works, how to run it and how to deploy it: [app/README.md](./app/README.md).
 
-<!-- Live demo: https://staking-poc.gushalk.workers.dev -->
+Live demo: https://staking-poc.gushalk.workers.dev
 
 ---
 
