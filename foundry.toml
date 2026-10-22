@@ -8,8 +8,12 @@ remappings = [
 ]
 via_ir = true
 solc = "0.8.28"
-# The invariant suites append their per-run effective call counts to cache/invariant-stats-*.txt
-fs_permissions = [{ access = "read-write", path = "./cache" }]
+# The invariant suites append their per-run effective call counts to cache/invariant-stats-*.txt. The testnet
+# scripts write and read the deployment files of the demo app
+fs_permissions = [
+    { access = "read-write", path = "./cache" },
+    { access = "read-write", path = "./app/src/config/deployments" },
+]
 
 [fmt]
 line_length = 120
@@ -28,6 +32,11 @@ test = "gas"
 # Every top-level call runs as its own transaction, so storage warmed by the setup is cold again and the measured
 # gas matches a transaction receipt (including the 21,000 intrinsic gas and calldata)
 isolate = true
+
+# Testnet tooling (script/testnet): its own suite, so the protocol's test figures stay unchanged
+# FOUNDRY_PROFILE=testnet forge test
+[profile.testnet]
+test = "script/testnet/test"
 
 [invariant]
 # Defaults; each campaign in test/invariant/Invariant.t.sol sets its own runs and depth with inline config and
