@@ -15,7 +15,7 @@ The original contract was written at Dexynth (2023-2024). v2 to v2.3 are a later
 
 **Live demo:** https://staking-poc.gushalk.workers.dev
 
-[![The demo app's staking page, with the reward stream split by boosted weight read live from Base Sepolia](docs/images/demo-app.png)](https://staking-poc.gushalk.workers.dev)
+[![The demo app's staking page: the running epoch, the reward stream split by boosted weight and what each level gets over the epoch, read live from Base Sepolia](docs/images/demo-app.png)](https://staking-poc.gushalk.workers.dev)
 
 ---
 
