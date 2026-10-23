@@ -87,7 +87,7 @@ export function HowItWorks({ model }: { model: StakingModel }) {
             <h3>One accumulator for everyone</h3>
             <p>
               The contract keeps one number: the reward per boosted unit accumulated since deployment. Every stake,
-              unstake, harvest, funding and migration first adds the time since the last update times the reward rate,
+              unstake, harvest, deposit and migration first adds the time since the last update times the reward rate,
               divided by the total boosted stake. Your rewards are your boosted balance times how far that number has
               moved since you were last settled, rounded down. Stake, unstake and harvest do not loop over stakes, levels
               or epochs.
@@ -99,27 +99,28 @@ export function HowItWorks({ model }: { model: StakingModel }) {
               A stake's weight is its amount times its level's multiplier, from {multiplier(first.boostP)} to{' '}
               {multiplier(last.boostP)}, rounded down. Every boosted unit earns the same reward per second, so a longer
               lock earns more per DEXY. The constructor only accepts locks and multipliers that strictly increase level
-              by level, with multipliers averaging exactly 1.0x.
+              by level, with multipliers averaging exactly 1.0x. A stake unlocks its level's lock after it was made.
+              Unstaking withdraws one stake and pays all your accrued rewards; harvesting pays them and leaves your
+              stakes in place.
             </p>
           </div>
           <div className="mechanic">
-            <h3>Epochs anchor the lock</h3>
+            <h3>Deposits stream epoch by epoch</h3>
             <p>
-              A stake unlocks at the start of the next epoch plus its level's lock. A stake made just before an epoch
-              turns waits little more than its lock; one made just after waits almost a full epoch longer. Unstaking
-              withdraws one stake and pays all your accrued rewards. Harvesting pays the rewards and leaves your stakes
-              in place.
+              Anyone can deposit USDC with addStakingReward. What is deposited during an epoch streams evenly over the
+              next one, so a deposit never changes the rate of the epoch already running: a platform deposits its yield
+              as it earns it, and stakers see a steady rate for a whole epoch. An epoch nobody deposited for streams
+              nothing. Time with nobody staked is set aside and joins the next deposit.
             </p>
           </div>
           <div className="mechanic">
-            <h3>The owner funds a stream, and little else</h3>
+            <h3>The owner can only migrate</h3>
             <p>
-              The owner funds the stream with addStakingReward: the new amount plus whatever the current stream has not
-              streamed yet is spread evenly over a new duration. Time with nobody staked is set aside and rolled into the
-              next funding. The owner can also migrate the rewards not streamed yet, after a delay of{' '}
-              {formatDuration(st.migrationDelay)} and within a window of {formatDuration(st.migrationWindow)}; that
-              closes new stakes and lifts every lock. There is no pause, and no function that moves a staker's DEXY or
-              accrued rewards to anyone but that staker.
+              The owner's one power over rewards is the migration: after a delay of {formatDuration(st.migrationDelay)}{' '}
+              and within a window of {formatDuration(st.migrationWindow)}, it moves the rewards not streamed yet (the
+              rest of the current epoch and what is queued for the next), and that closes new stakes and lifts every
+              lock. There is no pause, and no function that moves a staker's DEXY or accrued rewards to anyone but that
+              staker.
             </p>
           </div>
         </div>
@@ -141,24 +142,25 @@ export function HowItWorks({ model }: { model: StakingModel }) {
               <a href={explorerAddress(d.faucet)} target="_blank" rel="noreferrer">
                 faucet contract
               </a>
-              , with no value. The faucet hands out {formatFixed(st.drip, d.dexy.decimals, 0)} DEXY per account once
-              every 24 hours. USDC is earned by staking; only the owner receives it from the faucet,{' '}
-              {formatFixed(st.ownerDrip, d.reward.decimals, 0)} per claim, to fund the stream.
+              , with no value. The faucet hands out {formatFixed(st.drip, d.dexy.decimals, 0)} DEXY and{' '}
+              {formatFixed(st.usdcDrip, d.reward.decimals, 0)} USDC per account once every 24 hours, so you can stake
+              and also deposit rewards.
             </li>
             <li>
-              Epochs last {formatDuration(model.epochs.duration)}, the shortest the contract accepts, and the locks run
-              from {formatDuration(first.lockingPeriod)} to {formatDuration(last.lockingPeriod)}. The production
-              configuration in script/DeployDexynthStaking.s.sol uses 15-day epochs and locks of 30 to 720 days. The
-              multipliers are the same.
+              Epochs last {formatDuration(model.epochs.duration)} and the locks run from{' '}
+              {formatDuration(first.lockingPeriod)} to {formatDuration(last.lockingPeriod)}. The production configuration
+              in script/DeployDexynthStaking.s.sol uses 15-day epochs and locks of 30 to 720 days. The multipliers are
+              the same.
             </li>
             <li>
               The faucet contract staked {formatFixed(model.live.faucetStaked, d.dexy.decimals, 0)} DEXY across the
-              levels before the stream started, so the pool is never empty. It has no function to unstake, so that stake
+              levels before epoch 0 started, so the pool is never empty. It has no function to unstake, so that stake
               stays.
             </li>
             <li>
-              The deployer funds the stream with faucet USDC and remains the owner: {formatFixed(model.stream.funded, d.reward.decimals, 0)}{' '}
-              USDC funded so far.
+              The deployer deposited the first epoch's rewards and remains the owner. Since then a scheduled depositor
+              plays the platform: once a day it deposits a day of yield through the faucet, between 500 and 2,000 USDC a
+              week in all. {formatFixed(model.stream.funded, d.reward.decimals, 0)} USDC funded so far.
             </li>
           </ul>
         </div>

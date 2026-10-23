@@ -1,7 +1,7 @@
 // The staking contract's math, mirrored with the same scales and rounding (src/DexynthStaking.sol).
 // scripts/parity.test.ts checks every function here against a local deployment, to the wei.
 
-/** Scale of rewardRate, unallocatedRewards and accRewardPerBoostedShare */
+/** Scale of rewardRate, queuedRewards, unallocatedRewards and accRewardPerBoostedShare */
 export const PRECISION = 10n ** 36n
 /** Precision of a level's boostP: 1e10 is 1.0x */
 export const BOOST_PRECISION = 10n ** 10n
@@ -14,14 +14,19 @@ export interface Level {
   totalStaked: bigint
 }
 
-/** The storage the reward accounting reads, as the contract holds it */
+/** The storage the reward accounting reads, as the contract holds it, plus its immutable epoch length */
 export interface Pool {
+  /** Rate until nextEpochStart, scaled by 1e36 */
   rewardRate: bigint
   totalBoostedStake: bigint
   accRewardPerBoostedShare: bigint
   unallocatedRewards: bigint
   lastRewardTime: bigint
-  rewardEndTime: bigint
+  /** Start of the epoch after lastRewardTime, or of epoch 0 until it starts */
+  nextEpochStart: bigint
+  /** Rewards deposited for the epoch starting at nextEpochStart, scaled by 1e36 */
+  queuedRewards: bigint
+  epochDuration: bigint
 }
 
 export interface UserState {
@@ -59,19 +64,37 @@ export function boostedAmount(amount: bigint, boostP: bigint): bigint {
 }
 
 /**
- * _updatePool at time t: streams the rewards since lastRewardTime, capped at rewardEndTime, into the accumulator,
- * or into unallocatedRewards while nothing is staked. A time at or before lastRewardTime changes nothing.
+ * _streamedSinceUpdate at time t: the rewards streamed from lastRewardTime to t, scaled by 1e36, and the rate and next
+ * epoch start that apply from t. The stored rate runs until nextEpochStart, then the queued rewards over the epoch
+ * after it; nothing is queued past that.
+ */
+export function streamedSince(pool: Pool, t: bigint): { reward: bigint; rate: bigint; nextStart: bigint } {
+  const last = pool.lastRewardTime
+  if (t <= last) return { reward: 0n, rate: pool.rewardRate, nextStart: pool.nextEpochStart }
+  if (t < pool.nextEpochStart) return { reward: (t - last) * pool.rewardRate, rate: pool.rewardRate, nextStart: pool.nextEpochStart }
+  const duration = pool.epochDuration
+  const rate = pool.queuedRewards / duration
+  const end = pool.nextEpochStart + duration
+  const reward = (pool.nextEpochStart - last) * pool.rewardRate
+  if (t < end) return { reward: reward + (t - pool.nextEpochStart) * rate, rate, nextStart: end }
+  return { reward: reward + duration * rate, rate: 0n, nextStart: end + ((t - end) / duration + 1n) * duration }
+}
+
+/**
+ * _updatePool at time t: streams the rewards since lastRewardTime into the accumulator, or into unallocatedRewards
+ * while nothing is staked, and moves to the next epoch when one has started. A time at or before lastRewardTime
+ * changes nothing.
  */
 export function updatePool(pool: Pool, t: bigint): Pool {
   if (t <= pool.lastRewardTime) return pool
-  const end = min(t, pool.rewardEndTime)
+  const { reward, rate, nextStart } = streamedSince(pool, t)
   let { accRewardPerBoostedShare: acc, unallocatedRewards: unallocated } = pool
-  if (end > pool.lastRewardTime) {
-    const reward = (end - pool.lastRewardTime) * pool.rewardRate
+  if (reward > 0n) {
     if (pool.totalBoostedStake === 0n) unallocated += reward
     else acc += reward / pool.totalBoostedStake
   }
-  return { ...pool, accRewardPerBoostedShare: acc, unallocatedRewards: unallocated, lastRewardTime: t }
+  const moved = nextStart !== pool.nextEpochStart ? { rewardRate: rate, nextEpochStart: nextStart, queuedRewards: 0n } : {}
+  return { ...pool, ...moved, accRewardPerBoostedShare: acc, unallocatedRewards: unallocated, lastRewardTime: t }
 }
 
 /** _settle: moves the rewards accrued since the user's snapshot into storedRewards, rounded down */
@@ -90,17 +113,19 @@ export function pendingRewards(user: UserState, pool: Pool, t: bigint): bigint {
   return user.storedRewards + mulDiv(user.boostedBalance, acc - user.accRewardSnapshot, PRECISION)
 }
 
+/** Index of the epoch t falls in, -1 before epoch 0 starts */
 export function epochIndex(e: Epochs, t: bigint): bigint {
-  return (t - e.genesis) / e.duration
+  return t < e.genesis ? -1n : (t - e.genesis) / e.duration
 }
 
+/** Start of the next epoch after t, or of epoch 0 before it starts */
 export function nextEpochStart(e: Epochs, t: bigint): bigint {
   return e.genesis + (epochIndex(e, t) + 1n) * e.duration
 }
 
-/** unlockTime of a stake created at time t: the next epoch start plus the level's lock */
-export function unlockTimeFor(e: Epochs, lockingPeriod: bigint, t: bigint): bigint {
-  return nextEpochStart(e, t) + lockingPeriod
+/** unlockTime of a stake created at time t: the level's lock, counted from the stake */
+export function unlockTimeFor(lockingPeriod: bigint, t: bigint): bigint {
+  return t + lockingPeriod
 }
 
 export interface Outcome {
@@ -112,7 +137,6 @@ export interface Outcome {
 export function applyStake(
   pool: Pool,
   user: UserState,
-  e: Epochs,
   level: Level,
   amount: bigint,
   t: bigint,
@@ -129,7 +153,7 @@ export function applyStake(
       boostedBalance: u.boostedBalance + boosted,
     },
     boosted,
-    unlockTime: unlockTimeFor(e, level.lockingPeriod, t),
+    unlockTime: unlockTimeFor(level.lockingPeriod, t),
   }
 }
 
@@ -162,41 +186,47 @@ export function applyHarvest(pool: Pool, user: UserState, t: bigint): Outcome & 
   }
 }
 
-/** Rewards not streamed yet at time t, scaled by 1e36: what executeMigration would move. Not a payout */
+/**
+ * Rewards not streamed yet at time t, scaled by 1e36: the rest of the current epoch, the queued deposits and the
+ * unallocated rewards, what executeMigration would move. Not a payout
+ */
 export function unstreamedScaled(pool: Pool, t: bigint): bigint {
   const p = updatePool(pool, t)
-  const ahead = p.rewardEndTime > t ? (p.rewardEndTime - t) * p.rewardRate : 0n
-  return p.unallocatedRewards + ahead
+  const ahead = p.nextEpochStart > t ? (p.nextEpochStart - t) * p.rewardRate : 0n
+  return p.unallocatedRewards + p.queuedRewards + ahead
+}
+
+/** Rewards the pool streams between `from` and `to`, scaled by 1e36, from what is funded so far. `from` >= lastRewardTime */
+export function streamedBetween(pool: Pool, from: bigint, to: bigint): bigint {
+  if (to <= from) return 0n
+  return streamedSince(pool, to).reward - streamedSince(pool, from).reward
 }
 
 /**
- * Rewards a boosted weight would earn over `seconds` from t if nobody else staked or left, rounded down: an estimate
- * for previews, not a contract figure. The weight is assumed to be part of totalBoostedStake already.
+ * Rewards a boosted weight would earn over `seconds` from t if nobody else staked, left or deposited, rounded down: an
+ * estimate for previews, not a contract figure. The weight is assumed to be part of totalBoostedStake already.
  */
 export function rewardsOver(pool: Pool, boosted: bigint, t: bigint, seconds: bigint): bigint {
   if (pool.totalBoostedStake === 0n || boosted === 0n) return 0n
-  const end = min(t + seconds, pool.rewardEndTime)
-  if (end <= t) return 0n
-  return mulDiv((end - t) * pool.rewardRate, boosted, pool.totalBoostedStake * PRECISION)
+  return mulDiv(streamedBetween(pool, t, t + seconds), boosted, pool.totalBoostedStake * PRECISION)
 }
 
 /**
- * addStakingReward(amount, duration) landing at time t: the unstreamed rewards plus `amount` spread over `duration`.
- * Owner only on the contract, which also reverts on a zero duration, after a migration and past MAX_TOTAL_FUNDING.
+ * addStakingReward(amount) landing at time t: the pool moves to t, then the amount and the unallocated rewards join
+ * the queue of the next epoch to start. The contract reverts on a zero amount, after a migration and past
+ * MAX_TOTAL_FUNDING.
  */
-export function applyFunding(pool: Pool, amount: bigint, duration: bigint, t: bigint): Pool {
-  const leftover = unstreamedScaled(pool, t)
+export function applyDeposit(pool: Pool, amount: bigint, t: bigint): Pool {
   const p = updatePool(pool, t)
-  return {
-    ...p,
-    rewardRate: (leftover + amount * PRECISION) / duration,
-    rewardEndTime: t + duration,
-    unallocatedRewards: 0n,
-  }
+  return { ...p, queuedRewards: p.queuedRewards + p.unallocatedRewards + amount * PRECISION, unallocatedRewards: 0n }
 }
 
-/** Reward token units the stream pays out over the day from t, rounded down, whoever is staked */
+/** Reward token units the pool pays out over the day from t, rounded down, whoever is staked */
 export function streamedOverDay(pool: Pool, t: bigint): bigint {
-  if (t >= pool.rewardEndTime) return 0n
-  return ((min(pool.rewardEndTime, t + 86_400n) - t) * pool.rewardRate) / PRECISION
+  return streamedBetween(pool, t, t + 86_400n) / PRECISION
+}
+
+/** Reward token units a day the epoch running at t streams, rounded down. 0 before epoch 0 and in an unfunded epoch */
+export function ratePerDayAt(pool: Pool, t: bigint): bigint {
+  return (updatePool(pool, t).rewardRate * 86_400n) / PRECISION
 }

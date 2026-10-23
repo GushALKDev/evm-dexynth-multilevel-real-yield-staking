@@ -7,6 +7,11 @@ export const faucetAbi = [
         "name": "_owner",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "_feeder",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "nonpayable"
@@ -52,19 +57,6 @@ export const faucetAbi = [
   },
   {
     "type": "function",
-    "name": "OWNER_USDC_DRIP",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "USDC",
     "inputs": [],
     "outputs": [
@@ -78,8 +70,52 @@ export const faucetAbi = [
   },
   {
     "type": "function",
+    "name": "USDC_DRIP",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "claim",
     "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "feeder",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "fundRewards",
+    "inputs": [
+      {
+        "name": "_staking",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -98,6 +134,19 @@ export const faucetAbi = [
         "name": "timestamp",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "lastFundedAt",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint40",
+        "internalType": "uint40"
       }
     ],
     "stateMutability": "view"
@@ -189,6 +238,19 @@ export const faucetAbi = [
   },
   {
     "type": "function",
+    "name": "setFeeder",
+    "inputs": [
+      {
+        "name": "_feeder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "transferOwnership",
     "inputs": [
       {
@@ -215,6 +277,19 @@ export const faucetAbi = [
   },
   {
     "type": "event",
+    "name": "FeederSet",
+    "inputs": [
+      {
+        "name": "feeder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "OwnershipTransferred",
     "inputs": [
       {
@@ -228,6 +303,25 @@ export const faucetAbi = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardsFunded",
+    "inputs": [
+      {
+        "name": "staking",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -261,10 +355,32 @@ export const faucetAbi = [
   },
   {
     "type": "error",
+    "name": "OnlyFeeder",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "UnknownToken",
     "inputs": [
       {
         "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "WrongRewardToken",
+    "inputs": [
+      {
+        "name": "staking",
         "type": "address",
         "internalType": "address"
       }

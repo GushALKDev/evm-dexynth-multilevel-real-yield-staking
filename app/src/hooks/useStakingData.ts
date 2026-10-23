@@ -10,8 +10,8 @@ export interface StaticData {
   epochDuration: bigint
   genesis: bigint
   drip: bigint
-  /** USDC a claim hands out to the owner only */
-  ownerDrip: bigint
+  /** USDC a claim hands out, for a visitor to deposit as rewards */
+  usdcDrip: bigint
   cooldown: bigint
   migrationDelay: bigint
   migrationWindow: bigint
@@ -36,7 +36,7 @@ export interface AccountData {
   stakes: StakeInfo[]
   wallet: { dexy: bigint; reward: bigint; eth: bigint | undefined }
   allowance: bigint
-  /** USDC the staking contract may pull from the account, which a funding by the owner needs */
+  /** USDC the staking contract may pull from the account, which a deposit needs */
   rewardAllowance: bigint
   nextClaimAt: bigint
 }
@@ -73,7 +73,7 @@ function useStatic(d: Deployment) {
       { address: d.faucet, abi: faucetAbi, functionName: 'COOLDOWN' },
       { address: d.staking, abi: stakingAbi, functionName: 'MIGRATION_DELAY' },
       { address: d.staking, abi: stakingAbi, functionName: 'MIGRATION_WINDOW' },
-      { address: d.faucet, abi: faucetAbi, functionName: 'OWNER_USDC_DRIP' },
+      { address: d.faucet, abi: faucetAbi, functionName: 'USDC_DRIP' },
     ]),
     { staleTime: Infinity },
   )
@@ -87,7 +87,7 @@ function useStatic(d: Deployment) {
       cooldown: r[3] as bigint,
       migrationDelay: BigInt(r[4] as number),
       migrationWindow: BigInt(r[5] as number),
-      ownerDrip: r[6] as bigint,
+      usdcDrip: r[6] as bigint,
     }
   }, [res.data])
   return { ...res, data }
@@ -99,7 +99,9 @@ const POOL_READS = [
   'accRewardPerBoostedShare',
   'unallocatedRewards',
   'lastRewardTime',
-  'rewardEndTime',
+  'nextEpochStart',
+  'queuedRewards',
+  'epochDuration',
 ] as const
 
 function toPool(r: readonly unknown[]): Pool {
@@ -109,7 +111,9 @@ function toPool(r: readonly unknown[]): Pool {
     accRewardPerBoostedShare: r[2] as bigint,
     unallocatedRewards: r[3] as bigint,
     lastRewardTime: BigInt(r[4] as number),
-    rewardEndTime: BigInt(r[5] as number),
+    nextEpochStart: BigInt(r[5] as number),
+    queuedRewards: r[6] as bigint,
+    epochDuration: BigInt(r[7] as number),
   }
 }
 
@@ -131,16 +135,18 @@ function useLive(d: Deployment) {
   const data = useMemo((): LiveData | undefined => {
     const r = res.data
     if (!r) return undefined
-    const levels = r[6] as readonly { lockingPeriod: number; boostP: bigint; totalStaked: bigint }[]
+    // The reads after the pool, in the order listed above
+    const rest = r.slice(POOL_READS.length)
+    const levels = rest[0] as readonly { lockingPeriod: number; boostP: bigint; totalStaked: bigint }[]
     return {
       pool: toPool(r),
       levels: levels.map((l) => ({ lockingPeriod: BigInt(l.lockingPeriod), boostP: BigInt(l.boostP), totalStaked: BigInt(l.totalStaked) })),
-      totalRewardsFunded: BigInt(r[7] as bigint),
-      migrated: r[8] as boolean,
-      migrationRequestTime: BigInt(r[9] as number),
-      pendingMigrationAddress: r[10] as Address,
-      owner: r[11] as Address,
-      faucetStaked: BigInt((r[12] as readonly bigint[])[2]),
+      totalRewardsFunded: BigInt(rest[1] as bigint),
+      migrated: rest[2] as boolean,
+      migrationRequestTime: BigInt(rest[3] as number),
+      pendingMigrationAddress: rest[4] as Address,
+      owner: rest[5] as Address,
+      faucetStaked: BigInt((rest[6] as readonly bigint[])[2]),
     }
   }, [res.data])
   return { ...res, data }

@@ -9,7 +9,7 @@ const out = join(here, '..', '..', 'out')
 const target = join(here, '..', 'src', 'abi')
 
 const contracts = [
-  ['DexynthStaking.sol', 'DexynthStakingV2_2', 'stakingAbi'],
+  ['DexynthStaking.sol', 'DexynthStakingV2_3', 'stakingAbi'],
   ['TestnetFaucet.sol', 'TestnetFaucet', 'faucetAbi'],
   ['TestnetFaucet.sol', 'TestnetToken', 'testnetTokenAbi'],
 ]

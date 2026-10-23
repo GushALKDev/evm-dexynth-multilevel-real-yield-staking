@@ -1,16 +1,13 @@
 import { useState } from 'react'
-import { useConnection } from 'wagmi'
+import { useConnection, useWatchAsset } from 'wagmi'
 import { chain, links } from '../config/chain'
 import { useTx } from '../hooks/useTx'
 import { stakingAbi, tokenAbi } from '../lib/abi'
-import { countdown, formatDuration, formatFixed, formatPct, formatTime, parseAmount, toInput } from '../lib/format'
+import { countdown, formatDate, formatDuration, formatFixed, formatPct, formatTime, parseAmount, toInput } from '../lib/format'
 import { DAY, ONE, type AccountView, type StakingModel } from '../lib/model'
 import { applyStake, applyUnstake, rewardsOver, type StakeInfo } from '../lib/staking'
 
 const multiplier = (boostP: bigint) => `${formatFixed(boostP, 10, 2)}x`
-
-/** Below this much time to the next epoch, the stake preview warns that landing late moves the unlock by an epoch */
-const EPOCH_WARNING_SECONDS = 600n
 
 /* ------------------------------------------------------------------ */
 /* Summary                                                             */
@@ -19,6 +16,7 @@ const EPOCH_WARNING_SECONDS = 600n
 function Summary({ model, acc }: { model: StakingModel; acc: AccountView }) {
   const d = model.deployment
   const { run, busy } = useTx()
+  const watch = useWatchAsset()
   const noGas = acc.data.wallet.eth === 0n
   const hasStake = acc.user.totalStakedDexy > 0n
 
@@ -36,7 +34,9 @@ function Summary({ model, acc }: { model: StakingModel; acc: AccountView }) {
               ? `About ${formatFixed(acc.perDay, d.reward.decimals, 2)} USDC a day at today's pool, ${formatPct(acc.share, 2)} of the stream. Rewards accrue every second.`
               : model.live.migrated
                 ? 'The owner migrated the rewards not streamed yet, so your stakes earn nothing more. You can harvest what has accrued and withdraw every stake.'
-                : 'The stream has ended, so your stakes earn nothing until the owner funds it again.'
+                : model.epoch < 0n
+                  ? `Epoch 0 starts at ${formatTime(model.nextEpochAt)}, and your stakes earn from then.`
+                  : `Nothing was deposited for epoch ${model.epoch.toString()}, so your stakes earn nothing until the next epoch starts on ${formatDate(model.nextEpochAt)}.`
             : 'Stake DEXY below to start earning a share of the stream.'}
         </span>
       </div>
@@ -53,6 +53,13 @@ function Summary({ model, acc }: { model: StakingModel; acc: AccountView }) {
           <dt>Harvested so far</dt>
           <dd>
             {formatFixed(acc.user.totalHarvestedRewards, d.reward.decimals, d.reward.shown)} <span className="faint">USDC</span>
+            <button
+              className="link-button"
+              style={{ marginLeft: 8, fontSize: 13 }}
+              onClick={() => watch.mutate({ type: 'ERC20', options: { address: d.reward.address, symbol: d.reward.symbol, decimals: d.reward.decimals } })}
+            >
+              Add to wallet
+            </button>
           </dd>
         </div>
         <div className="row">
@@ -99,11 +106,9 @@ function StakeForm({ model, acc }: { model: StakingModel; acc: AccountView }) {
   const a = amount ?? 0n
 
   // Projected to the visitor's clock, the closest guess for when the call lands
-  const after = applyStake(acc.pool, acc.user, model.epochs, level, a, model.now)
+  const after = applyStake(acc.pool, acc.user, level, a, model.now)
   const shareAfter = after.pool.totalBoostedStake > 0n ? (after.user.boostedBalance * ONE) / after.pool.totalBoostedStake : 0n
   const perDayAfter = rewardsOver(after.pool, after.user.boostedBalance, model.now, DAY)
-  const epochTurnsSoon = model.nextEpochAt - model.now <= EPOCH_WARNING_SECONDS
-  const lateUnlock = after.unlockTime + model.epochs.duration
 
   let error: string | undefined
   if (model.live.migrated) error = 'The contract has been migrated, so new stakes are closed.'
@@ -151,7 +156,7 @@ function StakeForm({ model, acc }: { model: StakingModel; acc: AccountView }) {
         ))}
       </div>
       <p className="hint">
-        Level {levelIndex}: locked until the next epoch starts plus {formatDuration(level.lockingPeriod)}, weighted{' '}
+        Level {levelIndex}: locked for {formatDuration(level.lockingPeriod)} from the stake, weighted{' '}
         {multiplier(level.boostP)}.
       </p>
 
@@ -220,13 +225,6 @@ function StakeForm({ model, acc }: { model: StakingModel; acc: AccountView }) {
             <dd>{formatTime(after.unlockTime)}</dd>
           </div>
         </dl>
-      ) : null}
-
-      {amount && !error && epochTurnsSoon ? (
-        <div className="callout" data-tone="warn">
-          The epoch turns at {formatTime(model.nextEpochAt)}. If the stake lands after that, it unlocks one epoch later,
-          at {formatTime(lateUnlock)}.
-        </div>
       ) : null}
 
       {noGas ? (
@@ -411,7 +409,7 @@ function GetStarted({ model }: { model: StakingModel }) {
         </div>
         <div className="flow-step">
           <b>2</b>
-          <span>Connect your wallet and claim test DEXY from the button at the top.</span>
+          <span>Connect your wallet and claim test DEXY and USDC from the button at the top.</span>
         </div>
         <div className="flow-step">
           <b>3</b>
@@ -420,8 +418,8 @@ function GetStarted({ model }: { model: StakingModel }) {
         <div className="flow-step">
           <b>4</b>
           <span>
-            Come back once the stake unlocks, at the next epoch start plus its lock ({formatDuration(first.lockingPeriod)}{' '}
-            at level 0), and unstake it.
+            Deposit your USDC as rewards and watch the next epoch's rate rise. Come back once the stake unlocks, its
+            lock after staking ({formatDuration(first.lockingPeriod)} at level 0), and unstake it.
           </span>
         </div>
       </div>
@@ -450,8 +448,8 @@ export function AccountCard({ model, onConnect, onFaucet }: { model: StakingMode
               <strong>Connect a wallet to stake.</strong> You can read the whole pool without one.
             </p>
             <p>
-              New here? The faucet gives you {formatFixed(model.static.drip, d.dexy.decimals, 0)} DEXY on {chain.name},
-              once every 24 hours.
+              New here? The faucet gives you {formatFixed(model.static.drip, d.dexy.decimals, 0)} DEXY and{' '}
+              {formatFixed(model.static.usdcDrip, d.reward.decimals, 0)} USDC on {chain.name}, once every 24 hours.
             </p>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button className="btn btn-primary" onClick={onConnect}>

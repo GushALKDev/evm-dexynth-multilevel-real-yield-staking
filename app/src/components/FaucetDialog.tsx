@@ -11,7 +11,6 @@ export function FaucetDialog({ model, onClose, onConnect }: { model: StakingMode
   const { address, chainId } = useConnection()
   const { run, busy } = useTx()
   const wrongNetwork = !!address && chainId !== chain.id
-  const isOwner = !!address && address.toLowerCase() === model.live.owner.toLowerCase()
   const watch = useWatchAsset()
   const d = model.deployment
   const acc = model.account
@@ -20,34 +19,27 @@ export function FaucetDialog({ model, onClose, onConnect }: { model: StakingMode
   const canClaim = !!acc && model.chainTime >= next
   const noGas = !!acc && acc.data.wallet.eth === 0n
   const tokens = [
-    { info: d.dexy, balance: acc?.data.wallet.dexy ?? 0n },
-    { info: d.reward, balance: acc?.data.wallet.reward ?? 0n },
+    { info: d.dexy, drip: model.static.drip, balance: acc?.data.wallet.dexy ?? 0n },
+    { info: d.reward, drip: model.static.usdcDrip, balance: acc?.data.wallet.reward ?? 0n },
   ]
 
   return (
     <Dialog title="Test tokens" onClose={onClose}>
       <p className="muted">
-        The faucet hands out testnet DEXY with no value, once every 24 hours per account. USDC, the reward token, is
-        earned by staking; only the owner receives it from the faucet, to fund the stream. Transactions also need a
-        little {chain.name} ETH for gas.
+        The faucet hands out testnet DEXY and USDC with no value, once every 24 hours per account. Stake the DEXY, and
+        deposit the USDC as rewards to watch the next epoch's rate rise. Transactions also need a little {chain.name} ETH
+        for gas.
       </p>
       <div className="rows" style={{ margin: '14px 0 18px' }}>
-        <div className="row">
-          <span className="asset">
-            <TokenIcon symbol="DEXY" />
-            DEXY
-          </span>
-          <span style={{ fontWeight: 500 }}>{formatFixed(model.static.drip, d.dexy.decimals, 0)}</span>
-        </div>
-        {isOwner ? (
-          <div className="row">
+        {tokens.map(({ info, drip }) => (
+          <div className="row" key={info.symbol}>
             <span className="asset">
-              <TokenIcon symbol="USDC" />
-              USDC, as the owner
+              <TokenIcon symbol={info.symbol} />
+              {info.symbol}
             </span>
-            <span style={{ fontWeight: 500 }}>{formatFixed(model.static.ownerDrip, d.reward.decimals, 0)}</span>
+            <span style={{ fontWeight: 500 }}>{formatFixed(drip, info.decimals, 0)}</span>
           </div>
-        ) : null}
+        ))}
       </div>
 
       {!address ? (
@@ -71,14 +63,14 @@ export function FaucetDialog({ model, onClose, onConnect }: { model: StakingMode
             className="btn btn-primary btn-block"
             disabled={!canClaim || !!busy || noGas}
             onClick={() =>
-              run(isOwner ? 'Claim test tokens' : 'Claim test DEXY', isOwner ? 'Test tokens claimed' : 'Test DEXY claimed', {
+              run('Claim test tokens', 'Test tokens claimed', {
                 address: d.faucet,
                 abi: faucetAbi,
                 functionName: 'claim',
               })
             }
           >
-            {busy ? 'Claiming…' : isOwner ? 'Claim test tokens' : 'Claim test DEXY'}
+            {busy ? 'Claiming…' : 'Claim test tokens'}
           </button>
           {!canClaim && acc ? (
             <p className="hint">You claimed less than 24 hours ago. The faucet opens again for you at {formatTime(next)}.</p>

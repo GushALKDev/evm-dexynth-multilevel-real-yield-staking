@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AccountCard } from './components/Account'
-import { FundCard, LevelsCard, StreamCard } from './components/Cards'
+import { DepositCard, LevelsCard, StreamCard } from './components/Cards'
 import { FaucetDialog } from './components/FaucetDialog'
 import { Hero } from './components/Hero'
 import { Footer, Header, HowItWorks, Notice } from './components/Sections'
@@ -53,7 +53,7 @@ function Staking() {
                 <div className="stack">
                   <LevelsCard model={model} />
                   <StreamCard model={model} />
-                  <FundCard model={model} />
+                  <DepositCard model={model} />
                 </div>
               </div>
             </>

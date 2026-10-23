@@ -7,8 +7,8 @@ import {
   nextEpochStart,
   pendingRewards,
   rewardsOver,
-  streamedOverDay,
   unstreamedScaled,
+  updatePool,
   type Epochs,
   type Level,
   type Pool,
@@ -63,14 +63,21 @@ export interface StakingModel {
   now: bigint
   /** The latest block's timestamp: what the next call's simulation sees, and a floor for when it lands */
   chainTime: bigint
+  /** Index of the epoch running at `now`, -1 before epoch 0 starts */
   epoch: bigint
+  /** Start of the next epoch, or of epoch 0 before it starts */
   nextEpochAt: bigint
   levels: LevelView[]
   totalStaked: bigint
   stream: {
+    /** USDC units a day the epoch running at `now` streams, rounded down */
     perDay: bigint
-    endTime: bigint
+    /** Whether the epoch running at `now` streams anything */
     active: boolean
+    /** USDC units queued so far for the next epoch, rounded down */
+    queued: bigint
+    /** USDC units a day the next epoch will stream from what is queued so far, rounded down */
+    nextPerDay: bigint
     funded: bigint
     /** Rewards not streamed yet at `now`, in USDC units, rounded down */
     unstreamed: bigint
@@ -123,6 +130,8 @@ export function buildModel(
 
   const unstreamed = unstreamedScaled(pool, now) / PRECISION
   const funded = live.totalRewardsFunded
+  // The pool as the next update would leave it at `now`: the current epoch's rate and what is queued after it
+  const atNow = updatePool(pool, now)
 
   let accountView: AccountView | null = null
   if (account) {
@@ -165,9 +174,10 @@ export function buildModel(
     levels,
     totalStaked: live.levels.reduce((sum, l) => sum + l.totalStaked, 0n),
     stream: {
-      perDay: streamedOverDay(pool, now),
-      endTime: pool.rewardEndTime,
-      active: now < pool.rewardEndTime,
+      perDay: (atNow.rewardRate * DAY) / PRECISION,
+      active: atNow.rewardRate > 0n,
+      queued: atNow.queuedRewards / PRECISION,
+      nextPerDay: ((atNow.queuedRewards / atNow.epochDuration) * DAY) / PRECISION,
       funded,
       unstreamed,
       streamed: live.migrated ? null : funded > unstreamed ? funded - unstreamed : 0n,

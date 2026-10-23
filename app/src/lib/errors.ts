@@ -32,7 +32,7 @@ export function describeError(err: unknown): string {
 
   switch (name) {
     case 'WrongParams':
-      return 'Enter an amount above zero and pick one of the levels.'
+      return 'Enter an amount above zero, and for a stake pick one of the levels.'
     case 'ZeroBoostedStake':
       return "This amount is too small: at this level's multiplier its weight rounds down to zero."
     case 'AlreadyMigrated':
@@ -44,11 +44,9 @@ export function describeError(err: unknown): string {
     case 'StakeNotFound':
       return 'Your account has no stake with this number.'
     case 'NoRewardsToHarvest':
-      return 'There is nothing to harvest yet. Rewards accrue every second while the stream runs.'
+      return 'There is nothing to harvest yet. Rewards accrue every second while an epoch streams.'
     case 'NoStakedTokens':
       return 'You have no open stake, so there is nothing to harvest.'
-    case 'ZeroDuration':
-      return 'Enter a duration of at least one day.'
     case 'FundingCapExceeded':
       return 'This would take the rewards funded over the life of the contract past its cap.'
     case 'ClaimTooSoon':
@@ -57,6 +55,8 @@ export function describeError(err: unknown): string {
       return 'The faucet only hands out tokens to regular accounts, not to contracts or smart contract wallets.'
     case 'OnlyMinter':
       return 'Only the faucet can mint the testnet tokens.'
+    case 'OnlyFeeder':
+      return "Only the demo's scheduled depositor can fund rewards through the faucet. Anyone can deposit USDC directly."
   }
 
   if (reverted) return `The transaction would revert${name ? ` (${name})` : ''}.`

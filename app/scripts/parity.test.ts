@@ -22,7 +22,7 @@ import { waitForOutcome } from '../src/lib/receipt'
 import { faucetAbi, stakingAbi, tokenAbi } from '../src/lib/abi'
 import {
   PRECISION,
-  applyFunding,
+  applyDeposit,
   applyHarvest,
   applyStake,
   applyUnstake,
@@ -44,6 +44,8 @@ const alice = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8' as Address
 const bob = '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC' as Address
 const carol = '0x90F79bf6EB2c4f870365E785982E1f101E93b906' as Address
 const dave = '0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65' as Address
+// anvil's account 5, the faucet's feeder in scripts/local-chain.sh
+const feeder = '0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc' as Address
 
 interface LocalDeployment {
   staking: Address
@@ -100,8 +102,17 @@ describe.skipIf(!rpc)('parity with the contracts on a local chain', { timeout: 3
 
   async function readPool(): Promise<Pool> {
     const read = (functionName: string) => pub.readContract({ address: d.staking, abi: stakingAbi, functionName } as never) as Promise<bigint | number>
-    const [rewardRate, total, acc, unallocated, last, end] = await Promise.all(
-      ['rewardRate', 'totalBoostedStake', 'accRewardPerBoostedShare', 'unallocatedRewards', 'lastRewardTime', 'rewardEndTime'].map(read),
+    const [rewardRate, total, acc, unallocated, last, next, queued, duration] = await Promise.all(
+      [
+        'rewardRate',
+        'totalBoostedStake',
+        'accRewardPerBoostedShare',
+        'unallocatedRewards',
+        'lastRewardTime',
+        'nextEpochStart',
+        'queuedRewards',
+        'epochDuration',
+      ].map(read),
     )
     return {
       rewardRate: BigInt(rewardRate),
@@ -109,7 +120,9 @@ describe.skipIf(!rpc)('parity with the contracts on a local chain', { timeout: 3
       accRewardPerBoostedShare: BigInt(acc),
       unallocatedRewards: BigInt(unallocated),
       lastRewardTime: BigInt(last),
-      rewardEndTime: BigInt(end),
+      nextEpochStart: BigInt(next),
+      queuedRewards: BigInt(queued),
+      epochDuration: BigInt(duration),
     }
   }
 
@@ -150,7 +163,7 @@ describe.skipIf(!rpc)('parity with the contracts on a local chain', { timeout: 3
   /** Stakes at a pinned time and checks the pool, the user and the new stake against applyStake. */
   async function stakeAndCheck(account: Address, amount: bigint, levelIndex: number, at: bigint) {
     const [pool, user, level] = await Promise.all([readPool(), readUser(account), readLevel(levelIndex)])
-    const expected = applyStake(pool, user, epochs, level, amount, at)
+    const expected = applyStake(pool, user, level, amount, at)
     await send(account, d.staking, stakingAbi, 'stake', [amount, levelIndex], at)
     expect(await readPool()).toEqual(expected.pool)
     expect(await readUser(account)).toEqual(expected.user)
@@ -204,14 +217,16 @@ describe.skipIf(!rpc)('parity with the contracts on a local chain', { timeout: 3
     expect(await readPool()).toEqual(expected.pool)
   })
 
-  it('unlock times follow the epoch boundary', async () => {
+  it('stakes on both sides of an epoch turn leave the state the app predicts, with locks counted from the stake', async () => {
+    // A deposit for the next epoch first, so the turn has a queue to start streaming
+    await depositAndCheck(bob, 100n * 10n ** 6n, (await latestTime()) + 5n)
     const level = await readLevel(1)
-    const next = epochs.genesis + ((await latestTime()) - epochs.genesis) / epochs.duration * epochs.duration + epochs.duration
+    const now = await latestTime()
+    const next = now < epochs.genesis ? epochs.genesis : epochs.genesis + ((now - epochs.genesis) / epochs.duration + 1n) * epochs.duration
     const before = await stakeAndCheck(alice, 10n ** 18n, 1, next - 1n)
-    expect(before.unlockTime).toBe(unlockTimeFor(epochs, level.lockingPeriod, next - 1n))
-    expect(before.unlockTime).toBe(next + level.lockingPeriod)
+    expect(before.unlockTime).toBe(unlockTimeFor(level.lockingPeriod, next - 1n))
     const after = await stakeAndCheck(alice, 10n ** 18n, 1, next)
-    expect(after.unlockTime).toBe(next + epochs.duration + level.lockingPeriod)
+    expect(after.unlockTime).toBe(next + level.lockingPeriod)
   })
 
   it('unstake returns the principal and pays what the app predicts', async () => {
@@ -265,34 +280,46 @@ describe.skipIf(!rpc)('parity with the contracts on a local chain', { timeout: 3
     expect(await waitForOutcome(config, hash)).toBe('reverted')
   })
 
-  /** The owner mints, approves and funds at a pinned time; the pool must be what applyFunding predicts. */
-  async function fundAndCheck(amount: bigint, duration: bigint, at: bigint) {
-    await send(deployer, d.faucet, faucetAbi, 'mint', [d.rewardToken, deployer, amount])
-    await send(deployer, d.rewardToken, tokenAbi, 'approve', [d.staking, amount])
+  /** An account approves and deposits at a pinned time; the pool must be what applyDeposit predicts. */
+  async function depositAndCheck(from: Address, amount: bigint, at: bigint) {
+    await send(from, d.rewardToken, tokenAbi, 'approve', [d.staking, amount])
     const before = await readPool()
-    await send(deployer, d.staking, stakingAbi, 'addStakingReward', [amount, duration], at)
-    expect(await readPool()).toEqual(applyFunding(before, amount, duration, at))
+    await send(from, d.staking, stakingAbi, 'addStakingReward', [amount], at)
+    expect(await readPool()).toEqual(applyDeposit(before, amount, at))
   }
 
-  it('a funding mid-stream leaves the pool the app predicts', async () => {
-    await fundAndCheck(12_345_678_901n, 17n * 86_400n + 13n, (await latestTime()) + 41n)
+  it('a deposit by any account leaves the pool the app predicts', async () => {
+    await depositAndCheck(alice, 12_345_678n, (await latestTime()) + 41n)
   })
 
-  it('rewards stop at the end of the stream', async () => {
+  it("the feeder's funding through the faucet leaves the pool the app predicts", async () => {
+    const amount = 987_654_321n
+    const at = (await latestTime()) + 23n
+    const before = await readPool()
+    await send(feeder, d.faucet, faucetAbi, 'fundRewards', [d.staking, amount], at)
+    expect(await readPool()).toEqual(applyDeposit(before, amount, at))
+    expect(await pub.readContract({ address: d.faucet, abi: faucetAbi, functionName: 'lastFundedAt' })).toBe(Number(at))
+  })
+
+  it('pending rewards match the view across the epochs that stream what is queued and the empty ones after', async () => {
     const pool = await readPool()
-    await mineAt(pool.rewardEndTime + 1_000n)
-    const [p, user] = await Promise.all([readPool(), readUser(bob)])
-    const view = await pub.readContract({ address: d.staking, abi: stakingAbi, functionName: 'pendingRewards', args: [bob] })
-    expect(pendingRewards(user, p, pool.rewardEndTime + 1_000n)).toBe(view)
-    expect(pendingRewards(user, p, pool.rewardEndTime)).toBe(view)
+    const end = pool.nextEpochStart + pool.epochDuration
+    for (const t of [pool.nextEpochStart + 1n, end - 1n, end + 1_000n, end + 3n * pool.epochDuration]) {
+      await mineAt(t)
+      const user = await readUser(bob)
+      const view = await pub.readContract({ address: d.staking, abi: stakingAbi, functionName: 'pendingRewards', args: [bob] })
+      expect(pendingRewards(user, pool, t)).toBe(view)
+    }
   })
 
   it('the unstreamed figure is what a migration moves', async () => {
-    // A fresh funding after the stream ended, checked against the app, so part of a stream is left; then the delay
-    await fundAndCheck(1_000n * 10n ** 6n, 365n * 86_400n, (await latestTime()) + 7n)
-    await send(deployer, d.staking, stakingAbi, 'requestMigration', [deployer])
-    const t = (await latestTime()) + 30n * 86_400n + 7n
+    const requested = (await latestTime()) + 5n
+    await send(deployer, d.staking, stakingAbi, 'requestMigration', [deployer], requested)
+    // A deposit a minute before the migration, checked against the app, so its rewards are still queued when it runs
+    const t = requested + 30n * 86_400n + 7n
+    await depositAndCheck(bob, 200n * 10n ** 6n, t - 60n)
     const pool = await readPool()
+    expect(unstreamedScaled(pool, t)).toBeGreaterThanOrEqual(200n * 10n ** 6n * PRECISION)
     const receipt = await send(deployer, d.staking, stakingAbi, 'executeMigration', [], t)
     const [event] = parseEventLogs({ abi: stakingAbi, logs: receipt.logs, eventName: 'RewardTokenMigrationSuccess' })
     expect(event.args.amount).toBe(unstreamedScaled(pool, t) / PRECISION)

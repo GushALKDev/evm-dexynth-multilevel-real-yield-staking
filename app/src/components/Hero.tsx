@@ -1,5 +1,5 @@
 import { chain, explorerAddress } from '../config/chain'
-import { countdown, formatCompact, formatDate, formatDuration, formatFixed, formatPct } from '../lib/format'
+import { countdown, formatCompact, formatDate, formatDuration, formatFixed, formatPct, formatTime } from '../lib/format'
 import type { StakingModel } from '../lib/model'
 
 const multiplier = (boostP: bigint) => `${formatFixed(boostP, 10, 2)}x`
@@ -69,15 +69,17 @@ export function StreamSplit({ model }: { model: StakingModel }) {
 export function Hero({ model }: { model: StakingModel }) {
   const d = model.deployment
   const s = model.stream
-  const left = s.endTime > model.now ? s.endTime - model.now : 0n
+  const started = model.epoch >= 0n
+  const next = model.epoch + 1n
   return (
     <section className="hero">
       <div className="wrap">
         <div className="hero-head">
           <h1>Stake DEXY, pick a lock, and earn USDC every second.</h1>
           <p className="hero-sub">
-            A multi-level staking contract that streams its reward token through one global accumulator, running on{' '}
-            {chain.name} with testnet tokens. Every figure on this page is computed from the contract's live state.
+            A multi-level staking contract that streams its reward token through one global accumulator, epoch by epoch:
+            what is deposited during an epoch streams over the next one. Running on {chain.name} with testnet tokens;
+            every figure on this page is computed from the contract's live state.
           </p>
         </div>
         <div className="sheet">
@@ -97,9 +99,15 @@ export function Hero({ model }: { model: StakingModel }) {
               The owner has migrated the rewards that were not streamed yet. New stakes are closed and every stake can
               be withdrawn now, lock or not.
             </div>
+          ) : !started ? (
+            <div className="callout" style={{ marginTop: 14 }}>
+              Epoch 0 starts at {formatTime(model.nextEpochAt)}, with {formatFixed(s.queued, d.reward.decimals, 2)} USDC
+              deposited for it. Stakes made before then earn from its start.
+            </div>
           ) : !s.active ? (
             <div className="callout" data-tone="warn" style={{ marginTop: 14 }}>
-              The reward stream ended on {formatDate(s.endTime)}. Stakes earn nothing until the owner funds it again.
+              Nothing was deposited for epoch {model.epoch.toString()}, so stakes earn nothing until epoch {next.toString()}{' '}
+              starts on {formatDate(model.nextEpochAt)}.
             </div>
           ) : null}
           <div className="figures">
@@ -118,16 +126,16 @@ export function Hero({ model }: { model: StakingModel }) {
             </div>
             <div className="figure">
               <div className="figure-value">{formatFixed(s.perDay, d.reward.decimals, 2)}</div>
-              <div className="figure-label">USDC streamed a day</div>
+              <div className="figure-label">{started ? `USDC a day in epoch ${model.epoch.toString()}` : 'USDC a day until epoch 0'}</div>
             </div>
             <div className="figure">
               <div className="figure-value">{formatCompact(model.totalStaked, d.dexy.decimals)}</div>
               <div className="figure-label">DEXY staked</div>
             </div>
             <div className="figure">
-              <div className="figure-value">{s.active ? countdown(left) : 'Ended'}</div>
+              <div className="figure-value">{formatFixed(s.queued, d.reward.decimals, 2)}</div>
               <div className="figure-label">
-                {s.active ? `Until the stream ends, on ${formatDate(s.endTime)}` : `Stream ended on ${formatDate(s.endTime)}`}
+                USDC deposited for epoch {next.toString()}, which starts in {countdown(model.nextEpochAt - model.now)}
               </div>
             </div>
           </div>
