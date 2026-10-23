@@ -8,4 +8,4 @@ It is compiled with the repo settings (solc 0.8.28, `via_ir = true`), not with t
 
 v1 locates epochs in two different ways. `getEpochIndexByTimestamp` uses `(timestamp - GENESIS_EPOCH_TIMESTAMP) / epochDuration`, while `getEpochTimestamps` uses `GENESIS_EPOCH_TIMESTAMP + (epochDuration + 1) * index`, one second more per epoch. Once L epochs are closed, `checkForClosingEpochs` measures the seconds since an epoch start that lies L + 1 seconds after the real one, computes a per-second rate from that shorter span, and the rewards of the epochs it closes add up to more than `accRewards`. `accRewards -= _epochRewards` then underflows, so any call that closes epochs in the first L + 1 seconds of an epoch reverts. The rework fixed this in commit `14b8f8f`.
 
-The copy is kept as it was, so the benchmarks make every measured call 1 hour into an epoch, outside that window, for both v1 and v2.2.
+The copy is kept as it was, so the benchmarks make every measured call 1 hour into an epoch, outside that window, for both v1 and v2.3.

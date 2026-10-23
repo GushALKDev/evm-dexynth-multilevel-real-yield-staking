@@ -62,7 +62,7 @@ header        wordmark (links to the staking page), network, pages, test tokens,
 notice        one line: testnet, educational, not audited, stand-ins and shortened locks
 
 /             hero: headline + stream split + four figures
-              grid: your position, stake form and stakes (left, wider) | levels, stream, funding (right)
+              grid: your position, stake form and stakes (left, wider) | levels, stream, deposits (right)
 /how-it-works four mechanics + what differs on this testnet
 
 footer
@@ -76,10 +76,10 @@ least 34 px wide and drops the level names below 480 px, leaving the multipliers
 - Copy names what the user does: Stake, Harvest, Unstake. The button that says Stake produces a toast
   that says DEXY staked.
 - Every preview shows before and after, computed with the contract's own rounding
-  (`src/lib/staking.ts`): boosted weight, share of the stream, unlock time, rewards paid, the rate
-  and end of the stream after a funding.
-- An action only one account can take, funding the stream, is still shown to everyone: the preview
-  works for anyone, the button only for the owner, and the panel says why.
+  (`src/lib/staking.ts`): boosted weight, share of the stream, unlock time, rewards paid, and what a
+  deposit adds to the next epoch's queue and daily rate.
+- A deposit can be previewed without a wallet: the preview works for anyone, the button once a wallet
+  is connected, and the panel says so.
 - Figures that tick (rewards, the streamed total) project to the visitor's clock, kept between the
   latest block's timestamp and 30 seconds past it. Anything a call depends on (whether a stake is
   unlocked, what an unstake pays, whether the faucet opens) uses the latest block's timestamp, and the

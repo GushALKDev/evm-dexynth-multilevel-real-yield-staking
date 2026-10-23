@@ -7,15 +7,15 @@
 
 ## Review notes
 
-One entry per finding of the three review rounds. The tests of each finding were run against the code before its fix, and the ones that encode the fixed behaviour failed there.
+One entry per finding of the three review rounds, all on v2.2. The tests of each finding were run against the code before its fix, and the ones that encode the fixed behaviour failed there. v2.3, which streams deposits epoch by epoch, came after the rounds and has not been reviewed: see its [changelog entry](#v23-oct-2026-epoch-funding).
 
 ### Round 1 findings, fixed in round 2
 
 #### Permissionless `addStakingReward`
 
 - **Cause.** The function had no access control, so anyone could reschedule the remaining stream for free, stretching it or compressing it into one second.
-- **Fix.** `onlyOwner`.
-- **Test.** `test/regression/AddRewardAccess.t.sol`, plus the handler's non-owner funding action.
+- **Fix.** `onlyOwner`. Since v2.3 a deposit has no duration and only adds to the next epoch, so deposits are open to anyone again and still cannot reschedule what is streaming.
+- **Test.** `test/regression/AddRewardAccess.t.sol`, rewritten for v2.3 to check that no deposit changes the rate or the end of the running epoch.
 - **Commit.** `9f44894`.
 
 #### Precision loss with low-decimal reward tokens
@@ -28,7 +28,7 @@ One entry per finding of the three review rounds. The tests of each finding were
 #### Rewards streamed with no stakers
 
 - **Cause.** When `totalBoostedStake` was zero the pool skipped the elapsed time, and those rewards stayed in the contract with no claimant. A 1 wei stake at 0.65x had a boosted amount of zero and caused the same.
-- **Fix.** The skipped amount goes to `unallocatedRewards` and is rolled into the next funding; stakes with a zero boosted amount revert.
+- **Fix.** The skipped amount goes to `unallocatedRewards` and is rolled into the next funding (since v2.3, the next deposit); stakes with a zero boosted amount revert.
 - **Test.** `test/regression/UnallocatedRewards.t.sol`.
 - **Commit.** `668897a`.
 
@@ -42,7 +42,7 @@ One entry per finding of the three review rounds. The tests of each finding were
 #### Rewards accrued before `rewardStartTime`
 
 - **Cause.** v2.1 documented `rewardStartTime` as the start of accrual, but stakes accrued from creation and the field only delayed claiming.
-- **Fix.** `rewardStartTime` is removed. Rewards accrue and are claimable from the stake's block; the next epoch start only anchors `unlockTime`.
+- **Fix.** `rewardStartTime` is removed. Rewards accrue and are claimable from the stake's block; the next epoch start only anchors `unlockTime` (since v2.3 the lock counts from the stake itself).
 - **Test.** `testRewardsAccrueFromStakeTime` in `test/DexynthStaking.t.sol`.
 - **Commit.** `d02eb37`.
 
@@ -112,6 +112,17 @@ An independent review of the full diff found no contract bug and raised these po
 - **README and comment wording.** The v1 copy scope, the test token comments, the Validation test description and the scope of the "never above" statement were corrected in the README update.
 
 ## Changelog
+
+### v2.3 (Oct 2026): epoch funding
+
+Made together with the demo app, to make the contract more educational: rewards are deposited as a platform earns them and each deposit is paid out over one epoch, which shows how a real yield stream keeps a regular pace without letting a deposit reschedule the others. Not reviewed. See [why epochs](./01-design.md#why-epochs-v23) and the [changes for users](./01-design.md#changes-for-users-from-v22-to-v23).
+
+- `addStakingReward(_amount)`: no duration, open to anyone, queued for the next epoch to start. The epoch's rate is set when it starts from everything queued for it, and a deposit never changes the epoch already running.
+- The constructor takes the start of epoch 0, after the deployment; what is deposited before it streams during epoch 0.
+- Locks count from the stake instead of from the next epoch start.
+- `nextEpochStart` replaces `rewardEndTime`, `queuedRewards` is new, `RewardAdded(funder, epoch, amount)` replaces the old event, and migration also moves the queued rewards.
+- The contract is renamed `DexynthStakingV2_3`. Tests, invariants, gas snapshots (`snapshots/v2_3.json`) and guides are updated; `forge test` runs 136 tests.
+- Demo tooling: the testnet deployment uses 7-day epochs, starts epoch 0 5 minutes after the run and deposits its first 2,000 USDC before it. The faucet gives every claim 500 USDC besides the DEXY, drops the owner-only USDC drip, and lets a feeder address fund the rewards in one call (`fundRewards`), recording `lastFundedAt`. `FOUNDRY_PROFILE=testnet forge test` runs 45 tests. The app's funding panel becomes a deposit panel open to everyone, and `app/feeder/` adds the scheduled depositor, a Cloudflare Worker that deposits a day of yield every day, 500 to 2,000 USDC a week.
 
 ### Demo app (22 Oct 2026)
 
