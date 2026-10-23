@@ -7,7 +7,7 @@
 
 A multi-level staking contract that pays real yield: users lock DEXY in one of several levels, each with its own lock period and reward multiplier, and earn a reward token that anyone can deposit and the contract streams every second, epoch by epoch.
 
-The original contract was written at Dexynth (2023-2024). v2 to v2.3 are a later independent rework (Dec 2025 - Oct 2026) that replaces the loop-based reward logic with a reward-per-share accumulator (one per level in v2 and v2.1, a single global one since v2.2). v2.3 was made together with the demo app, to make the contract more educational: each deposit streams over the next epoch, so a platform can deposit its yield as it earns it without rescheduling what is already being paid.
+The original contract was written at Dexynth (2023-2024). v2 to v2.3 are a later independent rework (Dec 2025 - Oct 2026) that replaces the loop-based reward logic with a reward-per-share accumulator (one per level in v2 and v2.1, a single global one since v2.2). v2.3 was made together with the demo app, to improve the project's educational experience: see [what v2.3 adds](#what-v23-adds).
 
 > **Proof of concept for educational purposes. Not audited and not deployed on any mainnet.**
 
@@ -45,6 +45,28 @@ preview uses the contract's own rounding, checked to the wei against a local dep
 
 The testnet tooling and its tests live in [script/testnet/](./script/testnet). How the app works, how to run it and
 how to deploy it: [app/README.md](./app/README.md).
+
+---
+
+## What v2.3 adds
+
+v2.3 was built together with the demo app, to improve the project's educational experience: the contract becomes a
+working model of how a platform pays out real yield to its stakers.
+
+- **Rewards paced by epochs.** What is deposited during an epoch streams evenly over the next one, so stakers see a
+  steady rate for a whole epoch and can watch the next epoch's rewards build up before it starts.
+- **Deposits open to anyone.** Any account can deposit rewards with `addStakingReward(amount)`. The faucet hands out
+  USDC as well as DEXY, so a visitor can make a deposit and see the next epoch's rate rise.
+- **A scheduled start.** The deployment sets when epoch 0 starts, and what is deposited before it streams during
+  epoch 0, so rewards flow from the first epoch on.
+- **Locks counted from the stake.** A stake unlocks its level's lock after it was made, so a 1-hour lock ends exactly
+  an hour later.
+- **A depositor that plays the platform.** A Cloudflare Worker deposits a day of yield every day, 500 to 2,000 USDC a
+  week, so the demo keeps paying rewards on its own.
+- **An app that follows the epochs.** It shows the running epoch's rate, what is deposited for the next one and a
+  preview of every deposit, all computed with the contract's own math.
+
+Every interface change: [changes for users from v2.2 to v2.3](./docs/01-design.md#changes-for-users-from-v22-to-v23).
 
 ---
 
