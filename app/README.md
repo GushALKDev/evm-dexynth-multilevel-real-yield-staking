@@ -11,8 +11,11 @@ Live: https://staking-poc.gushalk.workers.dev
 
 ## What it shows
 
+- **The running epoch.** Next to the headline: the epoch's number, the time it has left and the USDC it streams in
+  all.
 - **The stream split.** Each level is a block as wide as the DEXY staked in it and as tall as its multiplier, so
-  its area is its boosted weight and its share of the reward stream. The visitor's own stake is drawn inside it.
+  its area is its boosted weight and its share of the reward stream. Each column shows its DEXY staked and share,
+  and the USDC the level gets over the epoch. The visitor's own stake is drawn inside it.
 - **Positions as the contract sees them.** Rewards tick every second. The app projects the accumulator with the
   contract's own formulas and rounding (`src/lib/staking.ts`), checked to the wei against a local deployment
   (`scripts/parity.test.ts`).

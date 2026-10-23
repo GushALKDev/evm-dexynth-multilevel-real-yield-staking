@@ -304,10 +304,61 @@ select {
   padding: clamp(32px, 6vw, 64px) 0 clamp(28px, 4vw, 44px);
 }
 
+.hero-top {
+  display: grid;
+  grid-template-columns: minmax(0, 760px) minmax(240px, 300px);
+  justify-content: space-between;
+  align-items: end;
+  gap: clamp(20px, 4vw, 48px);
+}
+
 .hero-head {
   display: grid;
   gap: 14px;
   max-width: 760px;
+}
+
+.epoch-now {
+  padding: 18px 20px 16px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-card);
+}
+
+.epoch-now-number {
+  font-size: clamp(34px, 4vw, 44px);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  line-height: 1.05;
+}
+
+.epoch-now-when,
+.epoch-now-label {
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+
+.epoch-now-when {
+  margin-top: 4px;
+}
+
+.epoch-now .progress {
+  margin: 12px 0 14px;
+}
+
+.epoch-now-total {
+  font-size: clamp(22px, 2.6vw, 28px);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.epoch-now-total small {
+  font-size: 0.55em;
+  font-weight: 500;
+  color: var(--ink-2);
+  letter-spacing: 0;
+  margin-left: 6px;
 }
 
 .hero h1 {
@@ -402,21 +453,54 @@ select {
 
 .split-col {
   display: grid;
-  grid-template-rows: auto 132px auto;
+  /* The labels above can wrap to more lines in narrow columns: the first row takes the slack so the blocks stay level */
+  grid-template-rows: 1fr 132px auto;
   gap: 6px;
-  min-width: 34px;
+  min-width: 40px;
+  container-type: inline-size;
   transition: flex-grow 600ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
+.split-axis {
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
 .split-share {
+  align-self: end;
   font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
 }
 
+/* Each level's USDC over the epoch sits right above its block: on the steel block itself small text misses WCAG AA
+   (4.11) */
+.split-usdc {
+  margin-bottom: 4px;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* "125.0K (22.4%)" measures about 95 px: a narrower column keeps the amount on one line and drops the share */
+@container (max-width: 99px) {
+  .split-pct {
+    display: none;
+  }
+}
+
+/* "142.86 USDC" measures about 72 px */
+@container (max-width: 79px) {
+  .split-usdc {
+    display: none;
+  }
+}
+
 .split-area {
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  justify-content: flex-end;
   border-bottom: 1px solid var(--rule-strong);
 }
 
@@ -1220,6 +1304,13 @@ td .sub {
   }
   .oracle-note {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .hero-top {
+    grid-template-columns: minmax(0, 1fr);
+    justify-content: stretch;
+  }
+  .epoch-now {
+    max-width: 420px;
   }
 }
 

@@ -153,6 +153,13 @@ describe('epoch figures', () => {
     expect(m.stream.perDay).toBe(((10n ** 45n / 86_400n) * 86_400n) / 10n ** 36n)
     expect(m.stream.queued).toBe(0n)
   })
+
+  it("total the running epoch's rewards as deposited, not one unit short from the rate's floor", () => {
+    const m = buildModel(d, st, live, undefined, 100_000n + 3_600n, 100_000n + 3_600n)
+    // The floored rate times the epoch falls short of 1,000 USDC by less than 86,400 / 1e36 units
+    expect(((10n ** 45n / 86_400n) * 86_400n) / 10n ** 36n).toBe(10n ** 9n - 1n)
+    expect(m.stream.epochTotal).toBe(10n ** 9n)
+  })
 })
 
 describe('projection times with a fast clock', () => {

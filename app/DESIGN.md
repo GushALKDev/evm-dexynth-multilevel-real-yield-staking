@@ -43,10 +43,12 @@ multipliers that trade lock for weight, epochs that anchor the lock).
 
 The stream split. Each level is a block as wide as the DEXY staked in it and as tall as its multiplier,
 so the block's area is its boosted weight. Every boosted unit earns the same reward per second, so the
-area is also the level's share of the stream, printed above it. The visitor's own DEXY is the accent
-part at the left edge of each block. The drawing is the contract's weighting rather than decoration:
-widths come from `getLevels()`, heights from each level's `boostP`, shares from `totalBoostedStake`.
-Everything else stays quiet.
+area is also the level's share of the stream. Above each column, its DEXY staked with the share in
+brackets, under one axis title that names the unit; right above each block, the USDC that level gets
+over the running epoch at today's pool, on the surface rather than on the steel block, where small text
+misses WCAG AA (4.11). The visitor's own DEXY is the accent part at the left edge of each block. The
+drawing is the contract's weighting rather than decoration: widths come from `getLevels()`, heights from
+each level's `boostP`, shares from `totalBoostedStake`. Everything else stays quiet.
 
 ## Tokens
 
@@ -61,15 +63,18 @@ header        wordmark (links to the staking page), network, pages, test tokens,
               pages: Stake, How it works, on a second header row below 1024 px
 notice        one line: testnet, educational, not audited, stand-ins and shortened locks
 
-/             hero: headline + stream split + four figures
+/             hero: headline and the running epoch (number, time left, USDC it streams) + stream split
+              + four figures
               grid: your position, stake form and stakes (left, wider) | levels, stream, deposits (right)
 /how-it-works four mechanics + what differs on this testnet
 
 footer
 ```
 
-Left-aligned throughout. Two columns from 1024 px, one below. The stream split keeps every level at
-least 34 px wide and drops the level names below 480 px, leaving the multipliers.
+Left-aligned throughout. Two columns from 1024 px, one below; below 1024 px the epoch panel moves under
+the headline. The stream split keeps every level at least 40 px wide, keeps its labels on one line and
+drops what does not fit in a narrow column (the share below 100 px, the USDC below 80 px), and drops the
+level names below 480 px, leaving the multipliers.
 
 ## Rules
 

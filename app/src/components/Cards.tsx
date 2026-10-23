@@ -23,7 +23,7 @@ export function LevelsCard({ model }: { model: StakingModel }) {
               <th scope="col">Level</th>
               <th scope="col">Lock</th>
               <th scope="col" className="num">
-                Staked
+                DEXY staked
               </th>
               <th scope="col" className="num">
                 USDC a day

@@ -16,27 +16,35 @@ export function StreamSplit({ model }: { model: StakingModel }) {
   const maxBoost = levels.reduce((m, l) => (l.boostP > m ? l.boostP : m), 0n)
   const acc = model.account
   const yoursTotal = acc ? acc.dexyByLevel.reduce((a, b) => a + b, 0n) : 0n
+  // What the epoch running now streams in all, or what is deposited for epoch 0 before it starts
+  const epochRewards = model.epoch >= 0n ? model.stream.epochTotal : model.stream.queued
 
   if (total === 0n) return <p className="muted">Nothing is staked yet. The first stake will appear here.</p>
 
   return (
     <>
+      <p className="split-axis">DEXY staked per level (share of the stream)</p>
       <div className="split" role="img" aria-label="Each level's DEXY staked, multiplier and share of the reward stream">
         {levels.map((l) => {
           const width = Number((l.totalStaked * 10_000n) / total) / 100
-          const height = Number((l.boostP * 10_000n) / maxBoost) / 100
+          // The tallest block fills 84% of the 132 px area, leaving the 21 px of its USDC label above it
+          const height = Number((l.boostP * 8_400n) / maxBoost) / 100
           const yours = acc ? acc.dexyByLevel[l.index] : 0n
           const yoursWidth = l.totalStaked > 0n ? Number((yours * 10_000n) / l.totalStaked) / 100 : 0
-          const perDay = model.stream.active ? (model.stream.perDay * l.share) / 10n ** 18n : 0n
+          const perEpoch = (epochRewards * l.share) / 10n ** 18n
           return (
             <div
               key={l.index}
               className="split-col"
               style={{ flexGrow: width, flexBasis: 0 }}
-              title={`Level ${l.index}: ${formatDuration(l.lockingPeriod)} lock, ${multiplier(l.boostP)}, ${formatFixed(l.totalStaked, d.dexy.decimals, 0)} DEXY staked, ${formatPct(l.share, 1)} of the stream, about ${formatFixed(perDay, d.reward.decimals, 2)} USDC a day`}
+              title={`Level ${l.index}: ${formatDuration(l.lockingPeriod)} lock, ${multiplier(l.boostP)}, ${formatFixed(l.totalStaked, d.dexy.decimals, 0)} DEXY staked, ${formatPct(l.share, 1)} of the stream, about ${formatFixed(perEpoch, d.reward.decimals, 2)} USDC over the epoch`}
             >
-              <span className="split-share">{formatPct(l.share, 1)}</span>
+              <span className="split-share">
+                {formatCompact(l.totalStaked, d.dexy.decimals)}{' '}
+                <span className="faint split-pct">({formatPct(l.share, 1)})</span>
+              </span>
               <div className="split-area">
+                <span className="split-usdc">{formatFixed(perEpoch, d.reward.decimals, 2)} USDC</span>
                 <div className="split-block" style={{ height: `${height}%` }}>
                   {yours > 0n ? <div className="split-yours" style={{ width: `${Math.max(yoursWidth, 1.5)}%` }} /> : null}
                 </div>
@@ -60,9 +68,47 @@ export function StreamSplit({ model }: { model: StakingModel }) {
             Yours, {formatPct(acc!.share, 2)} of the stream
           </span>
         ) : null}
-        <span className="faint">Width: DEXY staked. Height: multiplier. Above: share of the stream.</span>
+        <span className="faint">Width: DEXY staked. Height: multiplier. On each block: the USDC it gets over the epoch at today's pool.</span>
       </div>
     </>
+  )
+}
+
+/**
+ * The epoch running now, next to the headline: its number, how long it has left and what it streams in all. Before
+ * epoch 0 starts, the countdown to it and what is deposited for it.
+ */
+function EpochNow({ model }: { model: StakingModel }) {
+  const d = model.deployment
+  const s = model.stream
+  const started = model.epoch >= 0n
+  const duration = model.epochs.duration
+  const left = model.nextEpochAt - model.now
+  const progress = started ? Math.min(100, Math.max(0, (Number(duration - left) / Number(duration)) * 100)) : 0
+  return (
+    <div className="epoch-now">
+      <div className="epoch-now-number">Epoch {started ? model.epoch.toString() : '0'}</div>
+      <div className="epoch-now-when">
+        {started ? `Of ${formatDuration(duration)}, ends in ${countdown(left)}` : `Starts in ${countdown(left)}`}
+      </div>
+      <div
+        className="progress"
+        role="progressbar"
+        aria-label="Current epoch elapsed"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progress)}
+      >
+        <div style={{ width: `${progress}%` }} />
+      </div>
+      <div className="epoch-now-total">
+        {formatFixed(started ? s.epochTotal : s.queued, d.reward.decimals, 2)}
+        <small>USDC</small>
+      </div>
+      <div className="epoch-now-label">
+        {!started ? 'Deposited for it' : s.active ? 'To stream over this epoch' : 'Nothing was deposited for this epoch'}
+      </div>
+    </div>
   )
 }
 
@@ -74,13 +120,16 @@ export function Hero({ model }: { model: StakingModel }) {
   return (
     <section className="hero">
       <div className="wrap">
-        <div className="hero-head">
-          <h1>Stake DEXY, pick a lock, and earn USDC every second.</h1>
-          <p className="hero-sub">
-            A multi-level staking contract that streams its reward token through one global accumulator, epoch by epoch:
-            what is deposited during an epoch streams over the next one. Running on {chain.name} with testnet tokens;
-            every figure on this page is computed from the contract's live state.
-          </p>
+        <div className="hero-top">
+          <div className="hero-head">
+            <h1>Stake DEXY, pick a lock, and earn USDC every second.</h1>
+            <p className="hero-sub">
+              A multi-level staking contract that streams its reward token through one global accumulator, epoch by epoch:
+              what is deposited during an epoch streams over the next one. Running on {chain.name} with testnet tokens;
+              every figure on this page is computed from the contract's live state.
+            </p>
+          </div>
+          <EpochNow model={model} />
         </div>
         <div className="sheet">
           <div className="sheet-top">

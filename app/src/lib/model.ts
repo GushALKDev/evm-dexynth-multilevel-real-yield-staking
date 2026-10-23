@@ -72,6 +72,11 @@ export interface StakingModel {
   stream: {
     /** USDC units a day the epoch running at `now` streams, rounded down */
     perDay: bigint
+    /**
+     * USDC units the epoch running at `now` streams in all, rounded to the nearest unit: the rate's floor loses less
+     * than epochDuration / 1e36 units, so rounding down would show a deposit of 2,000 USDC as 1,999.999999
+     */
+    epochTotal: bigint
     /** Whether the epoch running at `now` streams anything */
     active: boolean
     /** USDC units queued so far for the next epoch, rounded down */
@@ -175,6 +180,7 @@ export function buildModel(
     totalStaked: live.levels.reduce((sum, l) => sum + l.totalStaked, 0n),
     stream: {
       perDay: (atNow.rewardRate * DAY) / PRECISION,
+      epochTotal: (atNow.rewardRate * atNow.epochDuration + PRECISION / 2n) / PRECISION,
       active: atNow.rewardRate > 0n,
       queued: atNow.queuedRewards / PRECISION,
       nextPerDay: ((atNow.queuedRewards / atNow.epochDuration) * DAY) / PRECISION,
