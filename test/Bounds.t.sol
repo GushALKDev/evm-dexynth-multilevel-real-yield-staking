@@ -6,7 +6,7 @@ import {Math} from "@openzeppelin/utils/math/Math.sol";
 import {StakingFixture} from "./utils/StakingFixture.sol";
 
 /**
- * @notice Behaviour at the documented precision and overflow bounds of DexynthStakingV2_2
+ * @notice Behaviour at the documented precision and overflow bounds of DexynthStakingV2_3
  * @dev Rewards funded over the life of the contract are capped at type(uint128).max units
  */
 contract BoundsTest is StakingFixture {
@@ -19,13 +19,13 @@ contract BoundsTest is StakingFixture {
 
     /**
      * @notice The largest funding is accepted and paid in full to a single staker
-     * @dev The stream releases MAX_FUNDING minus less than 1 day / 1e36 units, then the final floor removes at most
+     * @dev Epoch 0 releases MAX_FUNDING minus less than EPOCH / 1e36 units, then the final floor removes at most
      *      1 unit. The upper bound is exact
      */
     function test_MaxFundingIsStreamedInFull() public {
         _stake(alice, 1000 ether, 2);
-        _fund(MAX_FUNDING, 1 days);
-        vm.warp(block.timestamp + 1 days);
+        _fund(MAX_FUNDING);
+        vm.warp(START + EPOCH);
         vm.prank(alice);
         staking.harvest();
         assertLe(reward.balanceOf(alice), MAX_FUNDING);
@@ -35,34 +35,34 @@ contract BoundsTest is StakingFixture {
     function test_RevertWhen_FundingAboveMax() public {
         reward.mint(owner, MAX_FUNDING + 1);
         vm.expectRevert(FUNDING_CAP_EXCEEDED);
-        staking.addStakingReward(MAX_FUNDING + 1, 1 days);
+        staking.addStakingReward(MAX_FUNDING + 1);
     }
 
     function test_RevertWhen_CumulativeFundingAboveMax() public {
-        _fund(MAX_FUNDING, 1 days);
+        _fund(MAX_FUNDING);
         reward.mint(owner, 1);
         vm.expectRevert(FUNDING_CAP_EXCEEDED);
-        staking.addStakingReward(1, 1 days);
+        staking.addStakingReward(1);
     }
 
     /**
-     * @notice Smallest boosted stake (1 unit) alone for half of a maximum stream, then a large staker joins
-     * @dev During the first day the accumulator grows by the whole scaled reward divided by 1, about 1.7e74, the
+     * @notice Smallest boosted stake (1 unit) alone for half of a maximum epoch, then a large staker joins
+     * @dev During the first half the accumulator grows by half the scaled reward divided by 1, about 1.7e74, the
      *      largest increase the funding cap allows. Conservation is checked exactly
      */
     function test_MinBoostedStakeWithMaxFunding() public {
         _stake(alice, 2, 0); // 2 * 0.65 floors to 1 boosted unit
-        _fund(MAX_FUNDING, 2 days);
-        vm.warp(block.timestamp + 1 days);
+        _fund(MAX_FUNDING);
+        vm.warp(START + EPOCH / 2);
         _stake(bob, 1_000_000 ether, 2);
-        vm.warp(block.timestamp + 1 days);
+        vm.warp(START + EPOCH);
 
         vm.prank(alice);
         staking.harvest();
         vm.prank(bob);
         staking.harvest();
 
-        // Day 1: alice alone receives half. Day 2: alice holds 1 of 1 + 1e24 boosted units. Exact shares:
+        // First half: alice alone receives half. Second half: alice holds 1 of 1 + 1e24 boosted units. Exact shares:
         // alice MAX * (B + 2) / (2 * (B + 1)) and bob MAX * B / (2 * (B + 1)), rounded down here. A payout can only be
         // below its exact share: by less than 1 unit from its one settlement plus less than 1e-12 units from the rate
         // and accumulator truncations, so at most 1 unit below the rounded-down share and never above it
@@ -88,8 +88,8 @@ contract BoundsTest is StakingFixture {
         _stake(alice, amount, 0);
         assertEq(staking.totalBoostedStake(), amount * 6500000000 / 1e10);
 
-        _fund(1000 ether, 1 days);
-        vm.warp(block.timestamp + 1 days);
+        _fund(1000 ether);
+        vm.warp(START + EPOCH);
         vm.prank(alice);
         staking.harvest();
         // Accumulator truncation per update is below totalBoostedStake / 1e36, about 2.2e2 wei here, plus 1 wei

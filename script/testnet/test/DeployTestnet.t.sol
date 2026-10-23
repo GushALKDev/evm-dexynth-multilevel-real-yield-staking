@@ -8,13 +8,13 @@ import {DeployDexynthStaking} from "../../DeployDexynthStaking.s.sol";
 import {DeployTestnet} from "../DeployTestnet.s.sol";
 import {TopUpRewards} from "../TopUpRewards.s.sol";
 import {TestnetFaucet, TestnetToken} from "../TestnetFaucet.sol";
-import {DexynthStakingV2_2} from "../../../src/DexynthStaking.sol";
+import {DexynthStakingV2_3} from "../../../src/DexynthStaking.sol";
 
 /**
  * @dev Exposes the deploy script's levels, to check the testnet keeps its multipliers
  */
 contract DeployHarness is DeployDexynthStaking {
-    function levels() external pure returns (DexynthStakingV2_2.Level[] memory) {
+    function levels() external pure returns (DexynthStakingV2_3.Level[] memory) {
         return _levels();
     }
 }
@@ -22,7 +22,7 @@ contract DeployHarness is DeployDexynthStaking {
 /**
  * @title DeployTestnetTest
  * @notice Rehearses DeployTestnet.s.sol, then drives the deployment the way the demo app does: claim, approve the
- *         exact amount, stake, harvest and unstake, plus the failure modes and what a stranger can try
+ *         exact amount, stake, harvest, unstake and deposit, plus the failure modes and what a stranger can try
  * @dev Run with FOUNDRY_PROFILE=testnet. Outside a --broadcast run the deploy script writes no file
  */
 contract DeployTestnetTest is Test {
@@ -30,24 +30,30 @@ contract DeployTestnetTest is Test {
 
     address internal constant VISITOR = address(0xA11CE);
     address internal constant GRIEFER = address(0xBAD);
+    address internal constant FEEDER = address(0xFEED);
 
     DeployTestnet internal script;
-    DexynthStakingV2_2 internal staking;
+    DexynthStakingV2_3 internal staking;
     TestnetFaucet internal faucet;
     TestnetToken internal dexy;
     TestnetToken internal usdc;
     address internal owner;
     uint256 internal deployedAt;
+    uint256 internal genesis;
+    uint256 internal epoch;
 
     function setUp() public {
         vm.warp(1_800_000_000);
         vm.setEnv("PENDING_FILE", DRY_RUN_FILE);
+        vm.setEnv("FEEDER_ADDRESS", vm.toString(FEEDER));
         script = new DeployTestnet();
         script.run();
-        (faucet, staking, owner,) = script.deployment();
+        (faucet, staking, owner,,) = script.deployment();
         dexy = faucet.DEXY();
         usdc = faucet.USDC();
         deployedAt = block.timestamp;
+        genesis = staking.I_GENESIS_EPOCH_TIMESTAMP();
+        epoch = staking.epochDuration();
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -55,28 +61,29 @@ contract DeployTestnetTest is Test {
     //////////////////////////////////////////////////////////////*/
 
     function test_LevelsKeepTheDeployMultipliersWithDemoLocks() public {
-        DexynthStakingV2_2.Level[] memory production = new DeployHarness().levels();
-        DexynthStakingV2_2.Level[] memory live = staking.getLevels();
+        DexynthStakingV2_3.Level[] memory production = new DeployHarness().levels();
+        DexynthStakingV2_3.Level[] memory live = staking.getLevels();
         uint32[5] memory locks = [uint32(1 hours), 1 days, 3 days, 7 days, 14 days];
         assertEq(live.length, production.length);
         for (uint256 i = 0; i < live.length; i++) {
             assertEq(live[i].boostP, production[i].boostP, "multiplier");
             assertEq(live[i].lockingPeriod, locks[i], "lock");
         }
-        assertEq(staking.epochDuration(), 1 days);
-        assertEq(staking.I_GENESIS_EPOCH_TIMESTAMP(), deployedAt);
+        assertEq(epoch, 7 days);
+        assertEq(genesis, deployedAt + 5 minutes);
     }
 
-    function test_TokensAndOwnership() public view {
+    function test_TokensOwnershipAndFeeder() public view {
         assertEq(staking.DEXY(), address(dexy));
         assertEq(staking.REWARD_TOKEN(), address(usdc));
         assertEq(staking.owner(), owner);
         assertEq(faucet.owner(), owner);
+        assertEq(faucet.feeder(), FEEDER);
     }
 
     function test_SeedIsStakedByTheFaucetInEveryLevel() public view {
         uint256[5] memory seed = script.seedAmounts();
-        DexynthStakingV2_2.Level[] memory live = staking.getLevels();
+        DexynthStakingV2_3.Level[] memory live = staking.getLevels();
         uint256 sum;
         uint256 boosted;
         for (uint256 i = 0; i < seed.length; i++) {
@@ -93,13 +100,23 @@ contract DeployTestnetTest is Test {
         assertEq(dexy.balanceOf(address(staking)), sum);
     }
 
-    function test_StreamIsFundedAfterTheSeed() public view {
-        assertEq(staking.rewardRate(), uint256(100_000e6) * 1e36 / 365 days);
-        assertEq(staking.rewardEndTime(), deployedAt + 365 days);
-        assertEq(staking.totalRewardsFunded(), 100_000e6);
-        assertEq(usdc.balanceOf(address(staking)), 100_000e6);
-        // Funded after the seed, so nothing was streamed into an empty pool
+    /**
+     * @dev The first deposit waits for epoch 0 and streams over it to the seed, the only staker
+     */
+    function test_FirstDepositStreamsDuringEpochZero() public {
+        assertEq(staking.queuedRewards(), uint256(2_000e6) * 1e36);
+        assertEq(staking.rewardRate(), 0);
+        assertEq(staking.nextEpochStart(), genesis);
+        assertEq(staking.totalRewardsFunded(), 2_000e6);
+        assertEq(usdc.balanceOf(address(staking)), 2_000e6);
         assertEq(staking.unallocatedRewards(), 0);
+
+        vm.warp(genesis);
+        assertEq(staking.pendingRewards(address(faucet)), 0);
+        vm.warp(genesis + epoch / 2);
+        uint256 half = staking.pendingRewards(address(faucet));
+        assertLe(half, 1_000e6);
+        assertGe(half, 1_000e6 - 1);
     }
 
     function test_DryRunWritesNoPendingFile() public view {
@@ -113,6 +130,8 @@ contract DeployTestnetTest is Test {
         assertEq(stakeCount, 0);
         assertEq(faucet.lastClaim(smoke), 0);
         assertEq(usdc.balanceOf(smoke), 0);
+        assertEq(faucet.lastFundedAt(), 0);
+        assertEq(staking.queuedRewards(), uint256(2_000e6) * 1e36);
         assertEq(block.timestamp, deployedAt);
     }
 
@@ -125,22 +144,22 @@ contract DeployTestnetTest is Test {
      */
     function test_VisitorStakesHarvestsAndUnstakes() public {
         uint256 amount = 2_500e18;
-        vm.warp(deployedAt + 6 hours);
+        vm.warp(genesis + 6 hours);
         _claimAndStake(VISITOR, amount, 0);
-        DexynthStakingV2_2.Stake memory s = _stake(VISITOR, 0);
-        // Next epoch start (deploy + 1 day) plus the level 0 lock of 1 hour
-        assertEq(s.unlockTime, deployedAt + 1 days + 1 hours);
+        DexynthStakingV2_3.Stake memory s = _stake(VISITOR, 0);
+        // The level 0 lock of 1 hour, counted from the stake
+        assertEq(s.unlockTime, block.timestamp + 1 hours);
         assertEq(s.boostedAmount, amount * 65 / 100);
 
-        vm.warp(deployedAt + 12 hours);
+        vm.warp(block.timestamp + 30 minutes);
         uint256 expected = _appPending(VISITOR, block.timestamp);
         assertEq(staking.pendingRewards(VISITOR), expected, "app projection");
         vm.prank(VISITOR);
         staking.harvest();
-        assertEq(usdc.balanceOf(VISITOR), expected, "harvested");
+        assertEq(usdc.balanceOf(VISITOR), 500e6 + expected, "harvested");
 
         vm.warp(s.unlockTime - 1);
-        vm.expectRevert(DexynthStakingV2_2.StakeStillLocked.selector);
+        vm.expectRevert(DexynthStakingV2_3.StakeStillLocked.selector);
         vm.prank(VISITOR);
         staking.unstake(0);
 
@@ -149,27 +168,50 @@ contract DeployTestnetTest is Test {
         vm.prank(VISITOR);
         staking.unstake(0);
         assertEq(dexy.balanceOf(VISITOR), 10_000e18, "principal back");
-        assertEq(usdc.balanceOf(VISITOR), expected + more, "unstake pays the rest");
+        assertEq(usdc.balanceOf(VISITOR), 500e6 + expected + more, "unstake pays the rest");
     }
 
-    function test_StakeOneSecondBeforeTheEpochTurnsUnlocksALockLater() public {
-        vm.warp(deployedAt + 1 days - 1);
-        _claimAndStake(VISITOR, 1_000e18, 1);
-        assertEq(_stake(VISITOR, 0).unlockTime, deployedAt + 1 days + 1 days);
+    /**
+     * @dev A visitor deposits the faucet's USDC during epoch 0: epoch 1 streams it, epoch 0 keeps its rate
+     */
+    function test_VisitorDepositStreamsOverTheNextEpoch() public {
+        vm.warp(genesis + 1 days);
+        vm.startPrank(VISITOR, VISITOR);
+        faucet.claim();
+        usdc.approve(address(staking), 500e6);
+        vm.expectEmit(true, true, true, true, address(staking));
+        emit DexynthStakingV2_3.RewardAdded(VISITOR, 1, 500e6);
+        staking.addStakingReward(500e6);
+        vm.stopPrank();
+        assertEq(staking.rewardRate(), uint256(2_000e6) * 1e36 / epoch);
 
-        vm.warp(deployedAt + 1 days);
+        // The app projects across the epoch turn before any call writes it
+        uint256 projected = _appPending(address(faucet), genesis + epoch + 1 days);
+        vm.warp(genesis + epoch + 1 days);
+        assertEq(staking.pendingRewards(address(faucet)), projected, "app projection");
+        _claimAndStake(GRIEFER, 1_000e18, 0);
+        assertEq(staking.rewardRate(), uint256(500e6) * 1e36 / epoch);
+    }
+
+    function test_LockCountsFromTheStakeAcrossAnEpochTurn() public {
+        vm.warp(genesis + epoch - 1);
+        _claimAndStake(VISITOR, 1_000e18, 1);
+        assertEq(_stake(VISITOR, 0).unlockTime, block.timestamp + 1 days);
+
+        vm.warp(genesis + epoch);
         vm.startPrank(VISITOR);
         dexy.approve(address(staking), 1_000e18);
         staking.stake(1_000e18, 1);
         vm.stopPrank();
-        assertEq(_stake(VISITOR, 1).unlockTime, deployedAt + 2 days + 1 days, "one epoch later");
+        assertEq(_stake(VISITOR, 1).unlockTime, block.timestamp + 1 days, "the same lock");
     }
 
-    function test_RewardsStopAtTheEndOfTheStream() public {
+    function test_AnEpochWithoutDepositsStreamsNothing() public {
         _claimAndStake(VISITOR, 1_000e18, 4);
-        vm.warp(deployedAt + 365 days);
+        vm.warp(genesis + epoch);
         uint256 atEnd = staking.pendingRewards(VISITOR);
-        vm.warp(deployedAt + 400 days);
+        assertGt(atEnd, 0);
+        vm.warp(genesis + 3 * epoch);
         assertEq(staking.pendingRewards(VISITOR), atEnd);
         assertEq(_appPending(VISITOR, block.timestamp), atEnd);
     }
@@ -179,17 +221,17 @@ contract DeployTestnetTest is Test {
     //////////////////////////////////////////////////////////////*/
 
     function test_HarvestWithoutStakeReverts() public {
-        vm.expectRevert(DexynthStakingV2_2.NoStakedTokens.selector);
+        vm.expectRevert(DexynthStakingV2_3.NoStakedTokens.selector);
         vm.prank(VISITOR);
         staking.harvest();
     }
 
     function test_SecondHarvestInTheSameBlockReverts() public {
         _claimAndStake(VISITOR, 1_000e18, 0);
-        vm.warp(block.timestamp + 1 hours);
+        vm.warp(genesis + 1 hours);
         vm.startPrank(VISITOR);
         staking.harvest();
-        vm.expectRevert(DexynthStakingV2_2.NoRewardsToHarvest.selector);
+        vm.expectRevert(DexynthStakingV2_3.NoRewardsToHarvest.selector);
         staking.harvest();
         vm.stopPrank();
     }
@@ -199,11 +241,11 @@ contract DeployTestnetTest is Test {
         faucet.claim();
         // 1 wei at 0.65x boosts to zero
         dexy.approve(address(staking), type(uint256).max);
-        vm.expectRevert(DexynthStakingV2_2.ZeroBoostedStake.selector);
+        vm.expectRevert(DexynthStakingV2_3.ZeroBoostedStake.selector);
         staking.stake(1, 0);
-        vm.expectRevert(DexynthStakingV2_2.WrongParams.selector);
+        vm.expectRevert(DexynthStakingV2_3.WrongParams.selector);
         staking.stake(1e18, 5);
-        vm.expectRevert(DexynthStakingV2_2.WrongParams.selector);
+        vm.expectRevert(DexynthStakingV2_3.WrongParams.selector);
         staking.stake(0, 0);
         vm.expectRevert("ERC20: transfer amount exceeds balance");
         staking.stake(10_001e18, 0);
@@ -213,14 +255,27 @@ contract DeployTestnetTest is Test {
         vm.stopPrank();
     }
 
+    function test_DepositFailures() public {
+        vm.startPrank(VISITOR, VISITOR);
+        faucet.claim();
+        vm.expectRevert(DexynthStakingV2_3.WrongParams.selector);
+        staking.addStakingReward(0);
+        vm.expectRevert("ERC20: insufficient allowance");
+        staking.addStakingReward(1e6);
+        usdc.approve(address(staking), type(uint256).max);
+        vm.expectRevert("ERC20: transfer amount exceeds balance");
+        staking.addStakingReward(501e6);
+        vm.stopPrank();
+    }
+
     function test_UnstakeFailures() public {
         _claimAndStake(VISITOR, 1_000e18, 0);
         vm.startPrank(VISITOR);
-        vm.expectRevert(DexynthStakingV2_2.StakeNotFound.selector);
+        vm.expectRevert(DexynthStakingV2_3.StakeNotFound.selector);
         staking.unstake(1);
         vm.warp(_stake(VISITOR, 0).unlockTime);
         staking.unstake(0);
-        vm.expectRevert(DexynthStakingV2_2.AlreadyUnstaked.selector);
+        vm.expectRevert(DexynthStakingV2_3.AlreadyUnstaked.selector);
         staking.unstake(0);
         vm.stopPrank();
     }
@@ -229,16 +284,30 @@ contract DeployTestnetTest is Test {
                               GRIEFING
     //////////////////////////////////////////////////////////////*/
 
-    function test_StrangerCannotTouchTheStreamOrMigrate() public {
-        vm.startPrank(GRIEFER);
-        vm.expectRevert("Ownable: caller is not the owner");
-        staking.addStakingReward(0, 1);
+    /**
+     * @dev Deposits are open to anyone and only add to the next epoch; migration, ownership, the feeder and minting
+     *      stay out of a stranger's reach
+     */
+    function test_StrangerCanDepositButNotMigrateOrMint() public {
+        vm.warp(genesis + 1 days);
+        vm.startPrank(GRIEFER, GRIEFER);
+        faucet.claim();
+        usdc.approve(address(staking), 1);
+        staking.addStakingReward(1);
+        assertEq(staking.rewardRate(), uint256(2_000e6) * 1e36 / epoch, "epoch 0 unchanged");
+
         vm.expectRevert("Ownable: caller is not the owner");
         staking.requestMigration(GRIEFER);
         vm.expectRevert("Ownable: caller is not the owner");
         staking.renounceOwnership();
         vm.expectRevert("Ownable: caller is not the owner");
         staking.transferOwnership(GRIEFER);
+        vm.expectRevert(abi.encodeWithSelector(TestnetFaucet.OnlyFeeder.selector, GRIEFER));
+        faucet.fundRewards(address(staking), 1e6);
+        vm.expectRevert("Ownable: caller is not the owner");
+        faucet.setFeeder(GRIEFER);
+        vm.expectRevert("Ownable: caller is not the owner");
+        faucet.mint(address(usdc), GRIEFER, 1e6);
         vm.stopPrank();
     }
 
@@ -258,11 +327,11 @@ contract DeployTestnetTest is Test {
         vm.stopPrank();
 
         _claimAndStake(VISITOR, 1_000e18, 0);
-        vm.warp(block.timestamp + 6 hours);
+        vm.warp(genesis + 6 hours);
         uint256 expected = _appPending(VISITOR, block.timestamp);
         vm.prank(VISITOR);
         staking.harvest();
-        assertEq(usdc.balanceOf(VISITOR), expected);
+        assertEq(usdc.balanceOf(VISITOR), 500e6 + expected);
         vm.warp(_stake(VISITOR, 0).unlockTime);
         vm.prank(VISITOR);
         staking.unstake(0);
@@ -273,13 +342,13 @@ contract DeployTestnetTest is Test {
                                TOP UP
     //////////////////////////////////////////////////////////////*/
 
-    function test_TopUpSpreadsTheLeftoverAndTheNewAmount() public {
-        vm.warp(deployedAt + 100 days);
-        uint256 leftover = (staking.rewardEndTime() - block.timestamp) * staking.rewardRate();
-        new TopUpRewards().topUp(staking, faucet, 50_000e6, 180 days);
-        assertEq(staking.rewardRate(), (leftover + uint256(50_000e6) * 1e36) / 180 days);
-        assertEq(staking.rewardEndTime(), block.timestamp + 180 days);
-        assertEq(staking.totalRewardsFunded(), 150_000e6);
+    function test_TopUpQueuesForTheNextEpoch() public {
+        vm.warp(genesis + 3 days);
+        new TopUpRewards().topUp(staking, faucet, 50e6);
+        assertEq(staking.rewardRate(), uint256(2_000e6) * 1e36 / epoch, "epoch 0 unchanged");
+        assertEq(staking.queuedRewards(), uint256(50e6) * 1e36);
+        assertEq(staking.nextEpochStart(), genesis + epoch);
+        assertEq(staking.totalRewardsFunded(), 2_050e6);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -294,22 +363,31 @@ contract DeployTestnetTest is Test {
         vm.stopPrank();
     }
 
-    function _stake(address _user, uint64 _index) internal view returns (DexynthStakingV2_2.Stake memory s) {
+    function _stake(address _user, uint64 _index) internal view returns (DexynthStakingV2_3.Stake memory s) {
         (s.unstaked, s.level, s.timestamp, s.unlockTime, s.stakedDexy, s.boostedAmount) =
             staking.stakeInfo(_user, _index);
     }
 
     /**
-     * @dev The app's projection (app/src/lib/staking.ts): the accumulator advanced to _t, capped at the stream's end,
-     *      then the user's settlement rounded down
+     * @dev The app's projection (app/src/lib/staking.ts): the pool advanced to _t the way the next update will, the
+     *      stored rate until nextEpochStart and then the queued rewards over the epoch after it, then the user's
+     *      settlement rounded down
      */
     function _appPending(address _user, uint256 _t) internal view returns (uint256) {
         (, uint128 stored,, uint128 boosted,, uint256 snapshot) = staking.users(_user);
         uint256 acc = staking.accRewardPerBoostedShare();
-        uint256 last = staking.lastRewardTime();
-        uint256 end = Math.min(_t, staking.rewardEndTime());
         uint256 total = staking.totalBoostedStake();
-        if (end > last && total > 0) acc += (end - last) * staking.rewardRate() / total;
+        if (total > 0) acc += _streamedUntil(_t) / total;
         return stored + Math.mulDiv(boosted, acc - snapshot, 1e36);
+    }
+
+    function _streamedUntil(uint256 _t) internal view returns (uint256) {
+        uint256 last = staking.lastRewardTime();
+        if (_t <= last) return 0;
+        uint256 next = staking.nextEpochStart();
+        uint256 rate = staking.rewardRate();
+        if (_t < next) return (_t - last) * rate;
+        uint256 queuedRate = staking.queuedRewards() / epoch;
+        return (next - last) * rate + (Math.min(_t, next + epoch) - next) * queuedRate;
     }
 }

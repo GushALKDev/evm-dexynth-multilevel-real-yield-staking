@@ -2,11 +2,11 @@
 pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {DexynthStakingV2_2} from "../../src/DexynthStaking.sol";
+import {DexynthStakingV2_3} from "../../src/DexynthStaking.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 
 /**
- * @title Handler for DexynthStakingV2_2 invariant testing
+ * @title Handler for DexynthStakingV2_3 invariant testing
  * @notice Bounded actions for stateful fuzzing. The suite runs with fail_on_revert = true: every revert the
  *         contract should raise is asserted with vm.expectRevert, so any other revert fails the run. Calls that
  *         cannot do anything in the current state are discarded with vm.assume and show up as discards in the
@@ -19,9 +19,8 @@ contract Handler is Test {
 
     uint256 public constant NUM_ACTORS = 10;
     address public constant MIGRATION_TARGET = address(0xDEAD);
-    address public constant NON_OWNER = address(0xBAD);
 
-    DexynthStakingV2_2 public staking;
+    DexynthStakingV2_3 public staking;
     MockERC20 public dexy;
     MockERC20 public reward;
     address public owner;
@@ -30,7 +29,7 @@ contract Handler is Test {
     address[] public actors;
 
     /**
-     * @notice Reward tokens transferred into the staking contract by the owner
+     * @notice Reward tokens deposited into the staking contract, by the owner or by stakers
      */
     uint256 public ghost_rewardsAdded;
 
@@ -54,7 +53,7 @@ contract Handler is Test {
                               CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
-    constructor(DexynthStakingV2_2 _staking, MockERC20 _dexy, MockERC20 _reward) {
+    constructor(DexynthStakingV2_3 _staking, MockERC20 _dexy, MockERC20 _reward) {
         staking = _staking;
         dexy = _dexy;
         reward = _reward;
@@ -84,7 +83,7 @@ contract Handler is Test {
         dexy.mint(actor, _amount);
 
         if (staking.migrated()) {
-            vm.expectRevert(DexynthStakingV2_2.AlreadyMigrated.selector);
+            vm.expectRevert(DexynthStakingV2_3.AlreadyMigrated.selector);
             vm.prank(actor);
             staking.stake(_amount, level);
             effective["stakeAfterMigration"]++;
@@ -99,7 +98,7 @@ contract Handler is Test {
     /**
      * @notice Withdraws an open stake, preferring one that is already unlocked. Only when every open stake is
      *         locked does it warp to the unlock time of the first one found
-     * @dev Preferring unlocked stakes keeps most unstakes inside running streams instead of after long warps
+     * @dev Preferring unlocked stakes keeps most unstakes inside funded epochs instead of after long warps
      */
     function unstake(uint256 _actorSeed, uint256 _indexSeed) external {
         (address actor, uint64 index, bool found, bool unlocked) = _findOpenStake(_actorSeed, _indexSeed);
@@ -108,13 +107,13 @@ contract Handler is Test {
             (,,, uint40 unlockTime,,) = staking.stakeInfo(actor, index);
             vm.warp(unlockTime);
         }
-        bool streamRunning = block.timestamp < staking.rewardEndTime();
+        bool streaming = _streaming();
 
         vm.prank(actor);
         staking.unstake(index);
         ghost_settlements++;
         effective["unstake"]++;
-        if (streamRunning) effective["unstakeDuringStream"]++;
+        if (streaming) effective["unstakeDuringStream"]++;
     }
 
     /**
@@ -138,56 +137,46 @@ contract Handler is Test {
         }
         vm.assume(staker != address(0));
 
-        vm.expectRevert(DexynthStakingV2_2.NoRewardsToHarvest.selector);
+        vm.expectRevert(DexynthStakingV2_3.NoRewardsToHarvest.selector);
         vm.prank(staker);
         staking.harvest();
         effective["harvestNothing"]++;
     }
 
     /*//////////////////////////////////////////////////////////////
-                             OWNER ACTIONS
+                            FUNDING ACTIONS
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Owner funds a small (1 wei to 1000 tokens) or a regular (1 to 500,000 tokens) stream
-     * @dev After a migration the call must revert with AlreadyMigrated
+     * @notice The owner or a staker deposits a small (1 wei to 1000 tokens) or a regular (1 to 500,000 tokens)
+     *         amount for the next epoch
+     * @dev After a migration the call must revert with AlreadyMigrated. The funder receives exactly the amount it
+     *      deposits, so a staker's reward balance still holds only what it harvested
      */
-    function addStakingReward(uint256 _amount, uint256 _duration, bool _small) external {
+    function addStakingReward(uint256 _funderSeed, uint256 _amount, bool _small) external {
+        uint256 pick = _funderSeed % (NUM_ACTORS + 1);
+        address funder = pick == NUM_ACTORS ? owner : actors[pick];
         _amount = _small ? bound(_amount, 1, 1000 * rewardUnit) : bound(_amount, rewardUnit, 500_000 * rewardUnit);
-        _duration = bound(_duration, 1 days, 180 days);
-        reward.mint(owner, _amount);
 
-        vm.startPrank(owner);
-        reward.approve(address(staking), _amount);
         if (staking.migrated()) {
-            vm.expectRevert(DexynthStakingV2_2.AlreadyMigrated.selector);
-            staking.addStakingReward(_amount, _duration);
-            vm.stopPrank();
-            // The minted tokens stay with the owner, outside the conservation check
+            vm.prank(funder);
+            vm.expectRevert(DexynthStakingV2_3.AlreadyMigrated.selector);
+            staking.addStakingReward(_amount);
             effective["addRewardAfterMigration"]++;
             return;
         }
-        staking.addStakingReward(_amount, _duration);
+        reward.mint(funder, _amount);
+        vm.startPrank(funder);
+        reward.approve(address(staking), _amount);
+        staking.addStakingReward(_amount);
         vm.stopPrank();
         ghost_rewardsAdded += _amount;
         effective["addReward"]++;
     }
 
-    /**
-     * @notice A non-owner tries to fund or reschedule the stream, which must revert
-     */
-    function addStakingRewardNonOwner(uint256 _amount, uint256 _duration) external {
-        _amount = bound(_amount, 0, 1000 * rewardUnit);
-        _duration = bound(_duration, 1, 3650 days);
-        reward.mint(NON_OWNER, _amount);
-
-        vm.startPrank(NON_OWNER);
-        reward.approve(address(staking), _amount);
-        vm.expectRevert("Ownable: caller is not the owner");
-        staking.addStakingReward(_amount, _duration);
-        vm.stopPrank();
-        effective["addRewardNonOwner"]++;
-    }
+    /*//////////////////////////////////////////////////////////////
+                             OWNER ACTIONS
+    //////////////////////////////////////////////////////////////*/
 
     /**
      * @notice Requests a migration. Must revert while another request is live or after a migration
@@ -200,9 +189,9 @@ contract Handler is Test {
         bool isMigrated = staking.migrated();
         uint256 end = _migrationEnd();
         if (isMigrated) {
-            vm.expectRevert(DexynthStakingV2_2.AlreadyMigrated.selector);
+            vm.expectRevert(DexynthStakingV2_3.AlreadyMigrated.selector);
         } else if (requestTime != 0 && block.timestamp <= requestTime + end) {
-            vm.expectRevert(DexynthStakingV2_2.MigrationAlreadyPending.selector);
+            vm.expectRevert(DexynthStakingV2_3.MigrationAlreadyPending.selector);
         }
         vm.prank(owner);
         staking.requestMigration(MIGRATION_TARGET);
@@ -213,7 +202,7 @@ contract Handler is Test {
      * @notice Cancels the pending request, or checks the revert when there is none
      */
     function cancelMigration() external {
-        if (staking.migrationRequestTime() == 0) vm.expectRevert(DexynthStakingV2_2.NoMigrationRequested.selector);
+        if (staking.migrationRequestTime() == 0) vm.expectRevert(DexynthStakingV2_3.NoMigrationRequested.selector);
         vm.prank(owner);
         staking.cancelMigration();
         effective["cancelMigration"]++;
@@ -245,7 +234,7 @@ contract Handler is Test {
         if (block.timestamp < expiry) vm.warp(expiry);
 
         vm.prank(owner);
-        vm.expectRevert(DexynthStakingV2_2.MigrationExpired.selector);
+        vm.expectRevert(DexynthStakingV2_3.MigrationExpired.selector);
         staking.executeMigration();
         effective["expireMigration"]++;
     }
@@ -274,6 +263,16 @@ contract Handler is Test {
 
     function _migrationEnd() internal view returns (uint256) {
         return uint256(staking.MIGRATION_DELAY()) + staking.MIGRATION_WINDOW();
+    }
+
+    /**
+     * @dev Whether rewards are streaming at this second, from the stored epoch state the next pool update would use
+     */
+    function _streaming() internal view returns (bool) {
+        uint256 next = staking.nextEpochStart();
+        if (block.timestamp < next) return staking.rewardRate() > 0;
+        uint256 duration = staking.epochDuration();
+        return block.timestamp < next + duration && staking.queuedRewards() >= duration;
     }
 
     /**

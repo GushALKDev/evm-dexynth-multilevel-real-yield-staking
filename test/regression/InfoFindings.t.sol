@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 import {StakingFixture} from "../utils/StakingFixture.sol";
-import {DexynthStakingV2_2} from "../../src/DexynthStaking.sol";
+import {DexynthStakingV2_3} from "../../src/DexynthStaking.sol";
 
 /**
  * @notice Round 1 INFO findings
@@ -38,7 +38,7 @@ contract InfoFindingsTest is StakingFixture {
      */
     function test_RevertWhen_DexyEqualsRewardToken() public {
         vm.expectRevert(SAME_TOKEN);
-        new DexynthStakingV2_2(address(dexy), address(dexy), _levels(), EPOCH);
+        new DexynthStakingV2_3(address(dexy), address(dexy), _levels(), EPOCH, START);
     }
 
     /**
@@ -47,26 +47,26 @@ contract InfoFindingsTest is StakingFixture {
      */
     function test_RevertWhen_MoreThanMaxLevels() public {
         vm.expectRevert(TOO_MANY_LEVELS);
-        new DexynthStakingV2_2(address(dexy), address(reward), _evenLevels(11), EPOCH);
+        new DexynthStakingV2_3(address(dexy), address(reward), _evenLevels(11), EPOCH, START);
     }
 
     /**
      * @dev 10 levels with multipliers 0.55x to 1.45x in 0.1x steps average exactly 1.0x
      */
     function test_MaxLevelsIsAccepted() public {
-        DexynthStakingV2_2 s10 = new DexynthStakingV2_2(address(dexy), address(reward), _evenLevels(10), EPOCH);
+        DexynthStakingV2_3 s10 = new DexynthStakingV2_3(address(dexy), address(reward), _evenLevels(10), EPOCH, START);
         assertEq(s10.getNumberOfLevels(), 10);
     }
 
     /**
      * @dev n levels with lock i + 1 days and multipliers centred on 1.0x in 0.1x steps
      */
-    function _evenLevels(uint256 _n) internal pure returns (DexynthStakingV2_2.Level[] memory levels) {
-        levels = new DexynthStakingV2_2.Level[](_n);
+    function _evenLevels(uint256 _n) internal pure returns (DexynthStakingV2_3.Level[] memory levels) {
+        levels = new DexynthStakingV2_3.Level[](_n);
         for (uint256 i = 0; i < _n; i++) {
             // boost = 1.0x + (i - (n - 1) / 2) * 0.1x, written with 1e9 = 0.1x and doubled to stay in integers
             uint256 boost = (2e10 + (2 * i + 1) * 1e9 - _n * 1e9) / 2;
-            levels[i] = DexynthStakingV2_2.Level(uint32((i + 1) * 1 days), uint64(boost), 0);
+            levels[i] = DexynthStakingV2_3.Level(uint32((i + 1) * 1 days), uint64(boost), 0);
         }
     }
 

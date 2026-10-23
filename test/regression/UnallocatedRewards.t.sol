@@ -15,44 +15,45 @@ contract UnallocatedRewardsTest is StakingFixture {
     }
 
     /**
-     * @notice Half of a stream elapses with no stakers, then the owner starts a new stream with no new funds
-     * @dev The first 15 days are unallocated and rolled into the second stream, so alice ends up with the
-     *      full 10,000 tokens. Each of the two harvests floors the accumulator product once, and the scaled
-     *      rate loses less than 1e-30 wei per stream, so the total is at most 2 wei below 10,000 tokens.
-     *      The upper bound is exact: alice can never receive more than was funded.
+     * @notice Half of an epoch elapses with no stakers, then the next deposit carries that half
+     * @dev The first half of epoch 0 is unallocated and joins the 1,000 tokens deposited for epoch 2, so alice ends
+     *      up with the full 11,000 tokens. Each of the two harvests floors the accumulator product once, and the
+     *      scaled rate loses less than 1e-30 wei per epoch, so the total is at most 2 wei below 11,000 tokens. The
+     *      upper bound is exact: alice can never receive more than was funded.
      */
-    function test_RewardsStreamedWithNoStakersAreRolledIntoNextStream() public {
-        _fund(10_000 ether, 30 days);
-        vm.warp(block.timestamp + 15 days);
+    function test_RewardsStreamedWithNoStakersAreRolledIntoNextDeposit() public {
+        _fund(10_000 ether);
+        vm.warp(START + EPOCH / 2);
         _stake(alice, 1000 ether, 0);
-        vm.warp(block.timestamp + 60 days);
+        vm.warp(START + EPOCH);
         vm.prank(alice);
         staking.harvest();
 
-        staking.addStakingReward(0, 30 days);
-        vm.warp(block.timestamp + 30 days);
+        _fund(1_000 ether);
+        vm.warp(START + 3 * EPOCH);
         vm.prank(alice);
         staking.harvest();
 
         uint256 received = reward.balanceOf(alice);
-        assertLe(received, 10_000 ether);
-        assertGe(received, 10_000 ether - 2);
+        assertLe(received, 11_000 ether);
+        assertGe(received, 11_000 ether - 2);
     }
 
     /**
-     * @notice The skipped part of the stream is recorded exactly and cleared when it is rolled over
-     * @dev 15 of 30 days elapse with no stakers, so unallocatedRewards is exactly 15 days times the scaled rate
+     * @notice The skipped part of the epoch is recorded exactly and cleared when the next deposit carries it
+     * @dev Half of epoch 0 elapses with no stakers, so unallocatedRewards is exactly EPOCH / 2 times its scaled rate
      */
     function test_UnallocatedRewardsAreTrackedExactly() public {
-        _fund(10_000 ether, 30 days);
-        uint256 rate = staking.rewardRate();
-        vm.warp(block.timestamp + 15 days);
+        _fund(10_000 ether);
+        uint256 rate = uint256(10_000 ether) * 1e36 / EPOCH;
+        vm.warp(START + EPOCH / 2);
         _stake(alice, 1000 ether, 0);
-        assertEq(staking.unallocatedRewards(), 15 days * rate);
+        assertEq(staking.rewardRate(), rate);
+        assertEq(staking.unallocatedRewards(), EPOCH / 2 * rate);
 
-        staking.addStakingReward(0, 30 days);
+        _fund(1 ether);
         assertEq(staking.unallocatedRewards(), 0);
-        assertEq(staking.rewardRate(), (15 days * rate + 15 days * rate) / 30 days);
+        assertEq(staking.queuedRewards(), EPOCH / 2 * rate + uint256(1 ether) * 1e36);
     }
 
     /**

@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 import {StakingFixture} from "./utils/StakingFixture.sol";
-import {DexynthStakingV2_2} from "../src/DexynthStaking.sol";
+import {DexynthStakingV2_3} from "../src/DexynthStaking.sol";
 
 /**
  * @notice harvest must not loop over stakes, levels or epochs
@@ -13,7 +13,7 @@ contract HarvestGasIndependenceTest is StakingFixture {
     function setUp() public {
         _deploy(18);
         _stake(bob, 1000 ether, 2);
-        _fund(1_000_000 ether, 3650 days);
+        _fund(1_000_000 ether);
     }
 
     function _harvestGasAfterStakes(uint256 _stakes) internal returns (uint256) {
@@ -41,10 +41,13 @@ contract HarvestGasIndependenceTest is StakingFixture {
         assertEq(g500, g1);
     }
 
+    /**
+     * @dev From 2 epochs on, the funded epoch 0 has ended before the harvest, so every case takes the same path
+     */
     function test_HarvestGasIndependentOfEpochs() public {
         _stake(alice, 100 ether, 0);
         uint256 snap = vm.snapshotState();
-        uint256[4] memory epochs = [uint256(1), 10, 52, 100];
+        uint256[4] memory epochs = [uint256(2), 10, 52, 100];
         uint256[4] memory gas;
         for (uint256 i = 0; i < epochs.length; i++) {
             vm.revertToState(snap);
@@ -90,13 +93,13 @@ contract HarvestGasIndependenceTest is StakingFixture {
     }
 
     function _harvestGasWithLevels(uint256 _count) internal returns (uint256) {
-        DexynthStakingV2_2.Level[] memory levels = new DexynthStakingV2_2.Level[](_count);
+        DexynthStakingV2_3.Level[] memory levels = new DexynthStakingV2_3.Level[](_count);
         for (uint256 i = 0; i < _count; i++) {
             // Multipliers centred on 1.0x in 0.1x steps, lock of i + 1 days
             uint256 boost = (2e10 + (2 * i + 1) * 1e9 - _count * 1e9) / 2;
-            levels[i] = DexynthStakingV2_2.Level(uint32((i + 1) * 1 days), uint64(boost), 0);
+            levels[i] = DexynthStakingV2_3.Level(uint32((i + 1) * 1 days), uint64(boost), 0);
         }
-        staking = new DexynthStakingV2_2(address(dexy), address(reward), levels, EPOCH);
+        staking = new DexynthStakingV2_3(address(dexy), address(reward), levels, EPOCH, block.timestamp + 1 days);
         vm.prank(alice);
         dexy.approve(address(staking), type(uint256).max);
         vm.prank(bob);
@@ -104,7 +107,7 @@ contract HarvestGasIndependenceTest is StakingFixture {
         reward.approve(address(staking), type(uint256).max);
 
         _stake(bob, 1000 ether, 0);
-        _fund(1_000_000 ether, 3650 days);
+        _fund(1_000_000 ether);
         _stake(alice, 100 ether, 0);
         vm.warp(block.timestamp + 60 days);
         vm.prank(alice);

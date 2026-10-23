@@ -6,7 +6,7 @@ import {Test} from "forge-std/Test.sol";
 import {ConfirmDeployment} from "../ConfirmDeployment.s.sol";
 import {DeployTestnet} from "../DeployTestnet.s.sol";
 import {TestnetFaucet} from "../TestnetFaucet.sol";
-import {DexynthStakingV2_2} from "../../../src/DexynthStaking.sol";
+import {DexynthStakingV2_3} from "../../../src/DexynthStaking.sol";
 
 /**
  * @dev Writes the pending file the way a --broadcast run of DeployTestnet does
@@ -29,6 +29,7 @@ contract ConfirmDeploymentTest is Test {
 
     function setUp() public {
         vm.warp(1_800_000_000);
+        vm.setEnv("FEEDER_ADDRESS", vm.toString(address(0xFEED)));
         script = new PendingWriter();
         script.run();
         confirm = new ConfirmDeployment();
@@ -67,14 +68,14 @@ contract ConfirmDeploymentTest is Test {
 
     function test_RefusesAStakingContractConfiguredOtherwise() public {
         (string memory pending, string memory app) = _paths("other-levels");
-        (TestnetFaucet faucet,, address owner,) = script.deployment();
-        DexynthStakingV2_2.Level[] memory levels = script.demoLevels();
+        (TestnetFaucet faucet,, address owner,,) = script.deployment();
+        DexynthStakingV2_3.Level[] memory levels = script.demoLevels();
         levels[0].lockingPeriod = 2 hours;
         address dexy = address(faucet.DEXY());
         address usdc = address(faucet.USDC());
         uint256 epoch = script.DEMO_EPOCH();
         vm.prank(owner);
-        DexynthStakingV2_2 other = new DexynthStakingV2_2(dexy, usdc, levels, epoch);
+        DexynthStakingV2_3 other = new DexynthStakingV2_3(dexy, usdc, levels, epoch, block.timestamp + 1 hours);
         string memory json = vm.replace(script.deploymentJson(), vm.toString(_staking()), vm.toString(address(other)));
         script.writePending(json, pending);
 
@@ -84,8 +85,27 @@ contract ConfirmDeploymentTest is Test {
         _cleanUp(pending, app);
     }
 
+    /**
+     * @dev A deployment checked after epoch 0 ended has nothing left to show for its first deposit
+     */
+    function test_RefusesADeploymentCheckedAfterEpochZero() public {
+        (string memory pending, string memory app) = _paths("late");
+        script.writePending(script.deploymentJson(), pending);
+        (, DexynthStakingV2_3 staking,,,) = script.deployment();
+        vm.warp(staking.I_GENESIS_EPOCH_TIMESTAMP() + staking.epochDuration() + 1);
+        // The seed's harvest moves the pool past epoch 0, which nobody funded the next epoch after
+        (TestnetFaucet faucet,,,,) = script.deployment();
+        vm.prank(address(faucet));
+        staking.harvest();
+
+        vm.expectRevert(abi.encodeWithSelector(ConfirmDeployment.Mismatch.selector, "first deposit"));
+        confirm.confirm(pending, app);
+        assertFalse(vm.exists(app));
+        _cleanUp(pending, app);
+    }
+
     function _staking() internal view returns (address) {
-        (, DexynthStakingV2_2 staking,,) = script.deployment();
+        (, DexynthStakingV2_3 staking,,,) = script.deployment();
         return address(staking);
     }
 

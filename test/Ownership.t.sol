@@ -44,7 +44,7 @@ contract OwnershipTest is StakingFixture {
      * @notice A pending migration request survives an ownership change and the new owner can execute it
      */
     function test_PendingMigrationSurvivesOwnershipChange() public {
-        _fund(1000 ether, 60 days);
+        _fund(1000 ether);
         staking.requestMigration(address(0xDEAD));
         staking.transferOwnership(newOwner);
         vm.prank(newOwner);

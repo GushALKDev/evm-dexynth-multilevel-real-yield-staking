@@ -4,7 +4,7 @@ pragma solidity 0.8.28;
 import {Test} from "forge-std/Test.sol";
 
 import {TestnetFaucet, TestnetToken} from "../TestnetFaucet.sol";
-import {DexynthStakingV2_2} from "../../../src/DexynthStaking.sol";
+import {DexynthStakingV2_3} from "../../../src/DexynthStaking.sol";
 import {DeployTestnet} from "../DeployTestnet.s.sol";
 
 /**
@@ -19,11 +19,12 @@ contract Farmer {
 
 /**
  * @title TestnetFaucetTest
- * @notice The faucet's daily limit, its owner-only functions and what a stranger can and cannot do with it
+ * @notice The faucet's daily limit, its feeder and owner-only functions and what a stranger can and cannot do
  * @dev Run with FOUNDRY_PROFILE=testnet
  */
 contract TestnetFaucetTest is Test {
     address internal constant OWNER = address(0x0E);
+    address internal constant FEEDER = address(0xFEED);
     address internal constant ALICE = address(0xA11CE);
     address internal constant GRIEFER = address(0xBAD);
 
@@ -33,7 +34,7 @@ contract TestnetFaucetTest is Test {
 
     function setUp() public {
         vm.warp(1_800_000_000);
-        faucet = new TestnetFaucet(OWNER);
+        faucet = new TestnetFaucet(OWNER, FEEDER);
         dexy = faucet.DEXY();
         usdc = faucet.USDC();
     }
@@ -44,22 +45,22 @@ contract TestnetFaucetTest is Test {
         assertEq(dexy.MINTER(), address(faucet));
         assertEq(usdc.MINTER(), address(faucet));
         assertEq(faucet.owner(), OWNER);
+        assertEq(faucet.feeder(), FEEDER);
     }
 
-    function test_ClaimSendsTheDripOnly() public {
+    function test_ClaimSendsBothDrips() public {
         vm.prank(ALICE, ALICE);
         faucet.claim();
         assertEq(dexy.balanceOf(ALICE), 10_000e18);
-        assertEq(usdc.balanceOf(ALICE), 0);
+        assertEq(usdc.balanceOf(ALICE), 500e6);
         assertEq(faucet.nextClaimAt(ALICE), block.timestamp + 1 days);
     }
 
-    function test_OwnerClaimAlsoSendsUsdcToFundTheStream() public {
+    function test_OwnerClaimSendsTheSameDrips() public {
         vm.prank(OWNER, OWNER);
         faucet.claim();
         assertEq(dexy.balanceOf(OWNER), 10_000e18);
-        assertEq(usdc.balanceOf(OWNER), 100_000e6);
-        assertEq(faucet.nextClaimAt(OWNER), block.timestamp + 1 days);
+        assertEq(usdc.balanceOf(OWNER), 500e6);
     }
 
     function test_SecondClaimWithinADayReverts() public {
@@ -120,9 +121,58 @@ contract TestnetFaucetTest is Test {
         assertEq(usdc.balanceOf(ALICE), 5e6);
     }
 
+    function test_FundRewardsIsFeederOnly() public {
+        DexynthStakingV2_3 staking = _staking(address(dexy));
+        address[2] memory others = [GRIEFER, OWNER];
+        for (uint256 i = 0; i < others.length; i++) {
+            vm.expectRevert(abi.encodeWithSelector(TestnetFaucet.OnlyFeeder.selector, others[i]));
+            vm.prank(others[i]);
+            faucet.fundRewards(address(staking), 100e6);
+        }
+    }
+
+    /**
+     * @dev The minted USDC goes straight into the staking contract, queued for its next epoch
+     */
+    function test_FundRewardsDepositsForTheNextEpoch() public {
+        DexynthStakingV2_3 staking = _staking(address(dexy));
+        vm.expectEmit(true, true, true, true, address(staking));
+        emit DexynthStakingV2_3.RewardAdded(address(faucet), 0, 100e6);
+        vm.prank(FEEDER);
+        faucet.fundRewards(address(staking), 100e6);
+
+        assertEq(staking.queuedRewards(), uint256(100e6) * 1e36);
+        assertEq(usdc.balanceOf(address(staking)), 100e6);
+        assertEq(usdc.balanceOf(address(faucet)), 0);
+        assertEq(faucet.lastFundedAt(), block.timestamp);
+    }
+
+    function test_FundRewardsRejectsAContractThatPaysAnotherToken() public {
+        TestnetToken other = new TestnetToken("Other", "OTH", 6);
+        DexynthStakingV2_3 staking = new DexynthStakingV2_3(
+            address(dexy), address(other), new DeployTestnet().demoLevels(), 7 days, block.timestamp + 1 hours
+        );
+        vm.expectRevert(abi.encodeWithSelector(TestnetFaucet.WrongRewardToken.selector, address(staking)));
+        vm.prank(FEEDER);
+        faucet.fundRewards(address(staking), 100e6);
+    }
+
+    function test_SetFeederIsOwnerOnlyAndReplacesTheFeeder() public {
+        vm.expectRevert("Ownable: caller is not the owner");
+        vm.prank(GRIEFER);
+        faucet.setFeeder(GRIEFER);
+
+        vm.prank(OWNER);
+        faucet.setFeeder(ALICE);
+        assertEq(faucet.feeder(), ALICE);
+        DexynthStakingV2_3 staking = _staking(address(dexy));
+        vm.expectRevert(abi.encodeWithSelector(TestnetFaucet.OnlyFeeder.selector, FEEDER));
+        vm.prank(FEEDER);
+        faucet.fundRewards(address(staking), 100e6);
+    }
+
     function test_SeedStakeIsOwnerOnlyAndBelongsToTheFaucet() public {
-        DeployTestnet script = new DeployTestnet();
-        DexynthStakingV2_2 staking = new DexynthStakingV2_2(address(dexy), address(usdc), script.demoLevels(), 1 days);
+        DexynthStakingV2_3 staking = _staking(address(dexy));
 
         vm.expectRevert("Ownable: caller is not the owner");
         vm.prank(GRIEFER);
@@ -137,18 +187,27 @@ contract TestnetFaucetTest is Test {
 
         // The seed is the faucet's: nobody else can unstake it, and the faucet has no function that does
         vm.warp(block.timestamp + 30 days);
-        vm.expectRevert(DexynthStakingV2_2.StakeNotFound.selector);
+        vm.expectRevert(DexynthStakingV2_3.StakeNotFound.selector);
         vm.prank(OWNER);
         staking.unstake(0);
     }
 
     function test_SeedStakeRejectsAContractThatStakesAnotherToken() public {
-        DeployTestnet script = new DeployTestnet();
         TestnetToken other = new TestnetToken("Other", "OTH", 18);
-        DexynthStakingV2_2 staking = new DexynthStakingV2_2(address(other), address(usdc), script.demoLevels(), 1 days);
+        DexynthStakingV2_3 staking = _staking(address(other));
 
         vm.expectRevert(abi.encodeWithSelector(TestnetFaucet.WrongStakingToken.selector, address(staking)));
         vm.prank(OWNER);
         faucet.seedStake(address(staking), 0, 1e18);
+    }
+
+    /**
+     * @dev A staking contract with the demo levels and epoch that pays this faucet's USDC, epoch 0 an hour away
+     */
+    function _staking(address _dexy) internal returns (DexynthStakingV2_3) {
+        DeployTestnet script = new DeployTestnet();
+        return new DexynthStakingV2_3(
+            _dexy, address(usdc), script.demoLevels(), script.DEMO_EPOCH(), block.timestamp + 1 hours
+        );
     }
 }

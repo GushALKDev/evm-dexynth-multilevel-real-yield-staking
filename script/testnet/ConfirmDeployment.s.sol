@@ -5,7 +5,7 @@ import {Script, console2} from "forge-std/Script.sol";
 
 import {DeployTestnet} from "./DeployTestnet.s.sol";
 import {TestnetFaucet} from "./TestnetFaucet.sol";
-import {DexynthStakingV2_2} from "../../src/DexynthStaking.sol";
+import {DexynthStakingV2_3} from "../../src/DexynthStaking.sol";
 
 /**
  * @title ConfirmDeployment
@@ -13,8 +13,9 @@ import {DexynthStakingV2_2} from "../../src/DexynthStaking.sol";
  *         deployment file the app reads. Testnet only, read-only: it sends nothing
  * @dev DeployTestnet runs in full before forge sends a transaction, so its pending file can name contracts that a
  *      failed broadcast never deployed. This script reads the chain instead: every address must hold code and the
- *      contracts must be wired and configured as DeployTestnet sets them up (tokens, owner, epoch, levels, seed,
- *      stream). Anything else reverts and leaves the app's file as it was. If the RPC has not caught up with the
+ *      contracts must be wired and configured as DeployTestnet sets them up (tokens, owner, feeder, epoch, levels,
+ *      seed, and the first deposit queued for or streaming in epoch 0). Anything else reverts and leaves the app's
+ *      file as it was. Run it right after the deployment, within epoch 0. If the RPC has not caught up with the
  *      deployment yet, run it again.
  *
  *      Usage (Base Sepolia), after DeployTestnet.s.sol:
@@ -43,11 +44,12 @@ contract ConfirmDeployment is Script {
     function confirm(string memory _pendingFile, string memory _appFile) public {
         DeployTestnet expected = new DeployTestnet();
         string memory json = vm.readFile(_pendingFile);
-        DexynthStakingV2_2 staking = DexynthStakingV2_2(vm.parseJsonAddress(json, ".staking"));
+        DexynthStakingV2_3 staking = DexynthStakingV2_3(vm.parseJsonAddress(json, ".staking"));
         TestnetFaucet faucet = TestnetFaucet(vm.parseJsonAddress(json, ".faucet"));
         address dexy = vm.parseJsonAddress(json, ".dexy");
         address reward = vm.parseJsonAddress(json, ".rewardToken");
         address owner = vm.parseJsonAddress(json, ".owner");
+        address feeder = vm.parseJsonAddress(json, ".feeder");
         if (vm.parseJsonUint(json, ".chainId") != block.chainid) revert Mismatch("chain id");
 
         _hasCode("staking", address(staking));
@@ -58,10 +60,11 @@ contract ConfirmDeployment is Script {
         if (address(faucet.DEXY()) != dexy || address(faucet.USDC()) != reward) revert Mismatch("faucet tokens");
         if (staking.DEXY() != dexy || staking.REWARD_TOKEN() != reward) revert Mismatch("staking tokens");
         if (staking.owner() != owner || faucet.owner() != owner) revert Mismatch("owner");
+        if (faucet.feeder() != feeder) revert Mismatch("feeder");
         if (staking.epochDuration() != expected.DEMO_EPOCH()) revert Mismatch("epoch");
 
-        DexynthStakingV2_2.Level[] memory want = expected.demoLevels();
-        DexynthStakingV2_2.Level[] memory live = staking.getLevels();
+        DexynthStakingV2_3.Level[] memory want = expected.demoLevels();
+        DexynthStakingV2_3.Level[] memory live = staking.getLevels();
         if (live.length != want.length) revert Mismatch("level count");
         for (uint256 i = 0; i < want.length; i++) {
             if (live[i].lockingPeriod != want[i].lockingPeriod || live[i].boostP != want[i].boostP) {
@@ -71,9 +74,12 @@ contract ConfirmDeployment is Script {
 
         (,, uint128 seeded,,,) = staking.users(address(faucet));
         if (seeded != expected.SEED_TOTAL()) revert Mismatch("seed");
-        if (staking.totalRewardsFunded() < expected.STREAM_AMOUNT() || staking.rewardRate() == 0) {
-            revert Mismatch("stream");
-        }
+        // The pool state is written lazily: until a call after the start, epoch 0's rewards are still queued
+        uint256 genesis = staking.I_GENESIS_EPOCH_TIMESTAMP();
+        uint256 next = staking.nextEpochStart();
+        bool queued = next == genesis && staking.queuedRewards() >= expected.INITIAL_REWARDS() * 1e36;
+        bool streaming = next == genesis + expected.DEMO_EPOCH() && staking.rewardRate() > 0;
+        if (!queued && !streaming) revert Mismatch("first deposit");
 
         vm.writeJson(json, _appFile);
         console2.log("Confirmed, wrote", _appFile);

@@ -1,0 +1,18 @@
+{
+  "harvest_after_100_epochs": "160239",
+  "harvest_after_10_epochs": "160239",
+  "harvest_after_1_epoch": "160239",
+  "harvest_after_52_epochs": "160239",
+  "harvest_levels_touched_1": "160239",
+  "harvest_levels_touched_5": "160239",
+  "harvest_with_100_stakes": "160239",
+  "harvest_with_10_stakes": "160239",
+  "harvest_with_1_stake": "160239",
+  "harvest_with_500_stakes": "160239",
+  "stake_first": "173984",
+  "stake_subsequent": "139784",
+  "unstake_after_100_epochs": "207058",
+  "unstake_after_10_epochs": "207058",
+  "unstake_after_1_epoch": "207058",
+  "unstake_after_52_epochs": "207058"
+}

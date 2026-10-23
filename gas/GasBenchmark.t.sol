@@ -3,20 +3,20 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {DexynthStakingV1} from "../bench/DexynthStakingV1.sol";
-import {DexynthStakingV2_2} from "../src/DexynthStaking.sol";
+import {DexynthStakingV2_3} from "../src/DexynthStaking.sol";
 import {MockERC20} from "../test/mocks/MockERC20.sol";
 
 /**
- * @notice Gas benchmarks of v1 (bench/, original Dexynth contract) and v2.2 under the same named scenarios
+ * @notice Gas benchmarks of v1 (bench/, original Dexynth contract) and v2.3 under the same named scenarios
  * @dev Run with `FOUNDRY_PROFILE=gas forge test`. Each scenario measures one call with vm.snapshotGasLastCall,
- *      which writes the value to snapshots/<group>.json (groups "v1" and "v2_2"). Figures are the gas of the call
+ *      which writes the value to snapshots/<group>.json (groups "v1" and "v2_3"). Figures are the gas of the call
  *      itself, without the 21,000 intrinsic transaction gas and calldata cost.
  *
  *      Common setup for both versions:
  *      - 15 day epochs. Levels use the example multipliers (0.65x, 0.85x, 1.0x, 1.15x, 1.35x) and the example
  *        locks, except that level 0 has no lock so that unstake can be measured one epoch after staking.
- *      - bob stakes 1000 DEXY at level 2, then 1,000,000 reward tokens are added (v2.2 streams them over
- *        3650 days, v1 splits them over the epochs it closes).
+ *      - bob stakes 1000 DEXY at level 2, then 1,000,000 reward tokens are added (v2.3 streams them over its
+ *        epoch 0, which starts 1 hour after deployment, v1 splits them over the epochs it closes).
  *      - "after N epochs" means the call happens N + 1 epochs and 1 hour after alice's stake: v1 only pays rewards
  *        for epochs that start after the stake and have been closed, so this gives both versions N rewarded epochs.
  *      - Every measured call is 1 hour into an epoch. The original v1 computes epoch start times with
@@ -217,21 +217,21 @@ contract GasV1 is GasScenarios {
     }
 }
 
-contract GasV2_2 is GasScenarios {
-    DexynthStakingV2_2 internal staking;
+contract GasV2_3 is GasScenarios {
+    DexynthStakingV2_3 internal staking;
 
     function _group() internal pure override returns (string memory) {
-        return "v2_2";
+        return "v2_3";
     }
 
     function _deployStaking() internal override returns (address) {
-        DexynthStakingV2_2.Level[] memory levels = new DexynthStakingV2_2.Level[](5);
-        levels[0] = DexynthStakingV2_2.Level(0, 6500000000, 0);
-        levels[1] = DexynthStakingV2_2.Level(7776000, 8500000000, 0);
-        levels[2] = DexynthStakingV2_2.Level(15552000, 10000000000, 0);
-        levels[3] = DexynthStakingV2_2.Level(31536000, 11500000000, 0);
-        levels[4] = DexynthStakingV2_2.Level(62208000, 13500000000, 0);
-        staking = new DexynthStakingV2_2(address(dexy), address(reward), levels, EPOCH);
+        DexynthStakingV2_3.Level[] memory levels = new DexynthStakingV2_3.Level[](5);
+        levels[0] = DexynthStakingV2_3.Level(0, 6500000000, 0);
+        levels[1] = DexynthStakingV2_3.Level(7776000, 8500000000, 0);
+        levels[2] = DexynthStakingV2_3.Level(15552000, 10000000000, 0);
+        levels[3] = DexynthStakingV2_3.Level(31536000, 11500000000, 0);
+        levels[4] = DexynthStakingV2_3.Level(62208000, 13500000000, 0);
+        staking = new DexynthStakingV2_3(address(dexy), address(reward), levels, EPOCH, block.timestamp + OFFSET);
         return address(staking);
     }
 
@@ -251,6 +251,6 @@ contract GasV2_2 is GasScenarios {
     }
 
     function _addReward(uint256 _amount) internal override {
-        staking.addStakingReward(_amount, 3650 days);
+        staking.addStakingReward(_amount);
     }
 }

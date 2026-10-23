@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {DexynthStakingV2_2} from "../src/DexynthStaking.sol";
+import {DexynthStakingV2_3} from "../src/DexynthStaking.sol";
 import {ReentrantERC20} from "./mocks/ReentrantERC20.sol";
 
 /**
@@ -10,7 +10,7 @@ import {ReentrantERC20} from "./mocks/ReentrantERC20.sol";
  *         the reentrancy guard, and the outer call must still complete with the expected state
  */
 contract ReentrancyTest is Test {
-    DexynthStakingV2_2 internal staking;
+    DexynthStakingV2_3 internal staking;
     ReentrantERC20 internal dexy;
     ReentrantERC20 internal reward;
     address internal user = address(0xA11CE);
@@ -20,10 +20,10 @@ contract ReentrancyTest is Test {
         vm.warp(2_000_000_000);
         dexy = new ReentrantERC20();
         reward = new ReentrantERC20();
-        DexynthStakingV2_2.Level[] memory levels = new DexynthStakingV2_2.Level[](2);
-        levels[0] = DexynthStakingV2_2.Level(30 days, 5e9, 0);
-        levels[1] = DexynthStakingV2_2.Level(60 days, 15e9, 0);
-        staking = new DexynthStakingV2_2(address(dexy), address(reward), levels, 1 days);
+        DexynthStakingV2_3.Level[] memory levels = new DexynthStakingV2_3.Level[](2);
+        levels[0] = DexynthStakingV2_3.Level(30 days, 5e9, 0);
+        levels[1] = DexynthStakingV2_3.Level(60 days, 15e9, 0);
+        staking = new DexynthStakingV2_3(address(dexy), address(reward), levels, 1 days, block.timestamp + 1 hours);
 
         dexy.mint(user, 1000 ether);
         vm.prank(user);
@@ -67,8 +67,8 @@ contract ReentrancyTest is Test {
     function test_HarvestCannotBeReentered() public {
         vm.prank(user);
         staking.stake(100 ether, 0);
-        staking.addStakingReward(100 ether, 10 days);
-        vm.warp(block.timestamp + 10 days);
+        staking.addStakingReward(100 ether);
+        vm.warp(staking.nextEpochStart() + 1 days);
 
         // The reward transfer to the user tries to harvest again
         reward.arm(address(staking), abi.encodeCall(staking.harvest, ()));
@@ -76,7 +76,7 @@ contract ReentrancyTest is Test {
         staking.harvest();
 
         _assertBlocked(reward);
-        // Single staker, full stream: 100 tokens, at most 1 wei less from the one settlement, never more
+        // Single staker, full epoch: 100 tokens, at most 1 wei less from the one settlement, never more
         assertLe(reward.balanceOf(user), 100 ether);
         assertGe(reward.balanceOf(user), 100 ether - 1);
     }
@@ -84,7 +84,7 @@ contract ReentrancyTest is Test {
     function test_AddStakingRewardCannotBeReentered() public {
         // The reward transferFrom tries to enter stake, which is also guarded
         reward.arm(address(staking), abi.encodeCall(staking.stake, (1 ether, 0)));
-        staking.addStakingReward(100 ether, 10 days);
+        staking.addStakingReward(100 ether);
 
         _assertBlocked(reward);
         assertEq(staking.totalRewardsFunded(), 100 ether);
@@ -92,7 +92,7 @@ contract ReentrancyTest is Test {
     }
 
     function test_ExecuteMigrationCannotBeReentered() public {
-        staking.addStakingReward(100 ether, 60 days);
+        staking.addStakingReward(100 ether);
         staking.requestMigration(address(0xDEAD));
         vm.warp(block.timestamp + 30 days);
 

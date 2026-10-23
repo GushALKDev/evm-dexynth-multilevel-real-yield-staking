@@ -6,7 +6,7 @@ import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
 
 import {DeployTestnet} from "../DeployTestnet.s.sol";
 import {TestnetFaucet, TestnetToken} from "../TestnetFaucet.sol";
-import {DexynthStakingV2_2} from "../../../src/DexynthStaking.sol";
+import {DexynthStakingV2_3} from "../../../src/DexynthStaking.sol";
 
 /**
  * @title GasMarginTest
@@ -14,7 +14,8 @@ import {DexynthStakingV2_2} from "../../../src/DexynthStaking.sol";
  * @dev A node can estimate a call at the latest block's timestamp. When another call already updated the pool in that
  *      block, _updatePool returns early in the estimate; when the user was also settled in that block, so does
  *      _settle; when the user's own harvest or unstake in that block paid the rewards, the estimate pays nothing. One
- *      block later all of it runs, so the landed call costs more than the estimate. The app sends
+ *      block later all of it runs, so the landed call costs more than the estimate. When an epoch starts between the
+ *      two blocks, the landing also writes the new epoch's rate and start. The app sends
  *      estimate * 125 / 100 + 80,000 gas (app/src/hooks/useTx.ts). Each scenario measures the call twice from the
  *      same state, in the estimate's block and one block later, with the contracts' storage cooled first so both
  *      runs pay cold access as a separate transaction would
@@ -25,15 +26,16 @@ contract GasMarginTest is Test {
     address internal constant ALICE = address(0xA11CE);
     address internal constant BOB = address(0xB0B);
 
-    DexynthStakingV2_2 internal staking;
+    DexynthStakingV2_3 internal staking;
     TestnetFaucet internal faucet;
     TestnetToken internal dexy;
 
     function setUp() public {
         vm.warp(1_800_000_000);
+        vm.setEnv("FEEDER_ADDRESS", vm.toString(address(0xFEED)));
         DeployTestnet script = new DeployTestnet();
         script.run();
-        (faucet, staking,,) = script.deployment();
+        (faucet, staking,,,) = script.deployment();
         dexy = faucet.DEXY();
         address[2] memory users = [ALICE, BOB];
         for (uint256 i = 0; i < users.length; i++) {
@@ -51,7 +53,7 @@ contract GasMarginTest is Test {
      */
     function test_StakeAfterAnotherCallInTheSameBlock() public {
         _poke(BOB);
-        _check(abi.encodeCall(DexynthStakingV2_2.stake, (1_000e18, 0)));
+        _check(abi.encodeCall(DexynthStakingV2_3.stake, (1_000e18, 0)));
     }
 
     /**
@@ -60,17 +62,17 @@ contract GasMarginTest is Test {
     function test_StakeAfterOwnHarvestInTheSameBlock() public {
         vm.prank(ALICE);
         staking.harvest();
-        _check(abi.encodeCall(DexynthStakingV2_2.stake, (1_000e18, 0)));
+        _check(abi.encodeCall(DexynthStakingV2_3.stake, (1_000e18, 0)));
     }
 
     function test_HarvestAfterAnotherCallInTheSameBlock() public {
         _poke(BOB);
-        _check(abi.encodeCall(DexynthStakingV2_2.harvest, ()));
+        _check(abi.encodeCall(DexynthStakingV2_3.harvest, ()));
     }
 
     function test_UnstakeAfterAnotherCallInTheSameBlock() public {
         _poke(BOB);
-        _check(abi.encodeCall(DexynthStakingV2_2.unstake, (0)));
+        _check(abi.encodeCall(DexynthStakingV2_3.unstake, (0)));
     }
 
     /**
@@ -80,7 +82,7 @@ contract GasMarginTest is Test {
     function test_UnstakeAfterOwnHarvestInTheSameBlock() public {
         vm.prank(ALICE);
         staking.harvest();
-        _check(abi.encodeCall(DexynthStakingV2_2.unstake, (0)));
+        _check(abi.encodeCall(DexynthStakingV2_3.unstake, (0)));
     }
 
     /**
@@ -92,7 +94,7 @@ contract GasMarginTest is Test {
         IERC20 usdc = IERC20(address(faucet.USDC()));
         assertTrue(usdc.transfer(BOB, usdc.balanceOf(ALICE)));
         vm.stopPrank();
-        _check(abi.encodeCall(DexynthStakingV2_2.unstake, (0)));
+        _check(abi.encodeCall(DexynthStakingV2_3.unstake, (0)));
     }
 
     /**
@@ -104,13 +106,27 @@ contract GasMarginTest is Test {
         vm.warp(block.timestamp + 2 days);
         vm.prank(ALICE);
         staking.unstake(0);
-        _check(abi.encodeCall(DexynthStakingV2_2.unstake, (1)));
+        _check(abi.encodeCall(DexynthStakingV2_3.unstake, (1)));
     }
 
     function test_HarvestAfterOwnStakeInTheSameBlock() public {
         vm.prank(ALICE);
         staking.stake(1_000e18, 1);
-        _check(abi.encodeCall(DexynthStakingV2_2.harvest, ()));
+        _check(abi.encodeCall(DexynthStakingV2_3.harvest, ()));
+    }
+
+    /**
+     * @dev Estimated in the last second of an epoch with the next one funded, landed in the next epoch: the landing
+     *      moves the pool into it, writing its rate and start and clearing the queue
+     */
+    function test_HarvestAcrossAnEpochTurn() public {
+        vm.startPrank(BOB, BOB);
+        IERC20(address(faucet.USDC())).approve(address(staking), 500e6);
+        staking.addStakingReward(500e6);
+        vm.stopPrank();
+        vm.warp(staking.nextEpochStart() - 1);
+        _poke(BOB);
+        _check(abi.encodeCall(DexynthStakingV2_3.harvest, ()));
     }
 
     function _poke(address _user) internal {

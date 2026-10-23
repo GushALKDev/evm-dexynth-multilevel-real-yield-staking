@@ -3,14 +3,14 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {DexynthStakingV1} from "../../bench/DexynthStakingV1.sol";
-import {DexynthStakingV2_2} from "../../src/DexynthStaking.sol";
+import {DexynthStakingV2_3} from "../../src/DexynthStaking.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 
 /**
- * @notice Differential check of v1 (original Dexynth contract, bench/) against v2.2 on how rewards are shared
+ * @notice Differential check of v1 (original Dexynth contract, bench/) against v2.3 on how rewards are shared
  * @dev Absolute payouts are not comparable: v1 releases rewards per closed epoch at a rate computed when the
- *      epochs are closed (accRewards divided by the seconds since the last closed epoch), while v2.2 streams a
- *      funded amount over a chosen duration. What both must agree on is the split: with a constant set of stakes,
+ *      epochs are closed (accRewards divided by the seconds since the last closed epoch), while v2.3 streams each
+ *      deposit over the next epoch to start. What both must agree on is the split: with a constant set of stakes,
  *      every user receives total * boosted / totalBoosted. The tests align both versions on the same stakes and
  *      compare each user's share of the total paid by each version, first with a constant set of stakes and then
  *      with a user joining halfway, split into two phases that each have a constant set of stakes in both versions.
@@ -27,7 +27,7 @@ contract V1SharesTest is Test {
     uint8[3] internal levelIds = [0, 2, 4];
 
     DexynthStakingV1 internal v1;
-    DexynthStakingV2_2 internal v2;
+    DexynthStakingV2_3 internal v2;
     MockERC20 internal reward;
     MockERC20 internal dexy;
 
@@ -45,11 +45,12 @@ contract V1SharesTest is Test {
         ];
         v1 = new DexynthStakingV1(address(dexy), address(reward), levelsV1, EPOCH);
 
-        DexynthStakingV2_2.Level[] memory levelsV2 = new DexynthStakingV2_2.Level[](5);
+        DexynthStakingV2_3.Level[] memory levelsV2 = new DexynthStakingV2_3.Level[](5);
         for (uint256 i = 0; i < 5; i++) {
-            levelsV2[i] = DexynthStakingV2_2.Level(uint32(levelsV1[i].lockingPeriod), uint64(levelsV1[i].boostP), 0);
+            levelsV2[i] = DexynthStakingV2_3.Level(uint32(levelsV1[i].lockingPeriod), uint64(levelsV1[i].boostP), 0);
         }
-        v2 = new DexynthStakingV2_2(address(dexy), address(reward), levelsV2, EPOCH);
+        // v2.3 epoch 0 starts 1 hour after deployment, so the setUp deposit streams over it
+        v2 = new DexynthStakingV2_3(address(dexy), address(reward), levelsV2, EPOCH, block.timestamp + 1 hours);
 
         for (uint256 i = 0; i < 3; i++) {
             dexy.mint(users[i], 2 * amounts[i]);
@@ -64,7 +65,7 @@ contract V1SharesTest is Test {
         reward.approve(address(v1), type(uint256).max);
         reward.approve(address(v2), type(uint256).max);
         v1.addStakingReward(10_000 ether);
-        v2.addStakingReward(10_000 ether, 20 * EPOCH);
+        v2.addStakingReward(10_000 ether);
     }
 
     /**
@@ -78,12 +79,12 @@ contract V1SharesTest is Test {
      *        user's error is below 2.35 * 2000 + 1 = 4701 wei per epoch, 47,010 wei over 10 epochs. The distance
      *        between a payout and total * boosted / totalBoosted is then below 4 * 47,010 = 188,040 wei (its own
      *        error plus the errors inside the total).
-     *      - v2.2 floors each payout once (below 1 wei) and the accumulator by less than 1e-12 wei, so the same
+     *      - v2.3 floors each payout once (below 1 wei) and the accumulator by less than 1e-12 wei, so the same
      *        distance is below 4 wei.
      *      Comparing the shares p1 / t1 and p2 / t2 in integers: |p1 * t2 - p2 * t1| <= 188,040 * t2 + 4 * t1.
      *      With totals above 5e21 wei this allows a share difference below 4e-17.
      */
-    function test_V1AndV2_2ShareRewardsByBoostedStake() public {
+    function test_V1AndV2_3ShareRewardsByBoostedStake() public {
         vm.warp(block.timestamp + (REWARDED_EPOCHS + 1) * EPOCH + 1 hours);
 
         uint256[3] memory p1;
@@ -116,16 +117,17 @@ contract V1SharesTest is Test {
      * @notice A fourth user joins halfway. Phase 1 pays A, B and C only, phase 2 pays A, B, C and D, in both versions
      * @dev Timeline (15 day epochs, v1 genesis one epoch before deployment, so v1 is in epoch 1 at deployment):
      *      - t0 + 4 epochs + 1 hour: D stakes in v1 (epoch 5), so v1 counts D from epoch 6.
-     *      - t0 + 5 epochs + 1 hour: A, B and C harvest in both versions. v1 pays epochs 2 to 5, all without D.
-     *        Then D stakes in v2.2, which counts D from that block.
-     *      - t0 + 11 epochs + 1 hour: everyone harvests. v1 pays epochs 6 to 11, all with D; v2.2 pays the stream
-     *        since D joined, also with D.
+     *      - t0 + 5 epochs + 1 hour: A, B and C harvest in both versions. v1 pays epochs 2 to 5, all without D;
+     *        v2.3 pays its epoch 0, funded in setUp. Then D stakes in v2.3, which counts D from that block, and a
+     *        second deposit funds v2.3 epoch 6.
+     *      - t0 + 11 epochs + 1 hour: everyone harvests. v1 pays epochs 6 to 11, all with D; v2.3 pays its epoch 6,
+     *        also with D.
      *      Rounding bounds, as in the test above: a v1 user's error is below 2.35 * 2000 + 1 = 4701 wei per epoch.
      *      Phase 1 has 4 epochs and 3 users: distance below 4 * 4 * 4701 = 75,216 wei. Phase 2 has 6 epochs and
-     *      4 users: distance below 5 * 6 * 4701 = 141,030 wei. v2.2 floors each payout once: distance below the
+     *      4 users: distance below 5 * 6 * 4701 = 141,030 wei. v2.3 floors each payout once: distance below the
      *      number of users plus 1
      */
-    function test_V1AndV2_2ShareRewardsWhenAUserJoins() public {
+    function test_V1AndV2_3ShareRewardsWhenAUserJoins() public {
         address d = address(0xD);
         dexy.mint(d, 3000 ether);
         vm.startPrank(d);
@@ -152,6 +154,8 @@ contract V1SharesTest is Test {
 
         vm.prank(d);
         v2.stake(1500 ether, 1);
+        reward.mint(address(this), 10_000 ether);
+        v2.addStakingReward(10_000 ether);
 
         // Phase 2: A, B, C and D (1500 DEXY at 0.85x, 1275 boosted units)
         vm.warp(start + 11 * EPOCH + 1 hours);
@@ -173,8 +177,8 @@ contract V1SharesTest is Test {
         for (uint256 i = 0; i < _users.length; i++) {
             uint256 before = reward.balanceOf(_users[i]);
             vm.prank(_users[i]);
-            // v1 and v2.2 share the harvest() signature, so one cast serves both
-            DexynthStakingV2_2(_staking).harvest();
+            // v1 and v2.3 share the harvest() signature, so one cast serves both
+            DexynthStakingV2_3(_staking).harvest();
             paid[i] = reward.balanceOf(_users[i]) - before;
         }
     }

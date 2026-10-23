@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print the v1 vs v2.2 gas table from snapshots/, with the reduction computed from the snapshot values.
+"""Print the v1 vs v2.3 gas table from snapshots/, with the reduction computed from the snapshot values.
 
 Usage: FOUNDRY_PROFILE=gas forge test && python3 gas/gas_table.py
 """
@@ -8,7 +8,7 @@ import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 V1 = json.loads((ROOT / "snapshots" / "v1.json").read_text())
-V22 = json.loads((ROOT / "snapshots" / "v2_2.json").read_text())
+V23 = json.loads((ROOT / "snapshots" / "v2_3.json").read_text())
 
 ORDER = [
     "stake_first",
@@ -29,10 +29,10 @@ ORDER = [
     "harvest_levels_touched_5",
 ]
 
-assert sorted(ORDER) == sorted(V1) == sorted(V22), "scenario names differ between the snapshots"
+assert sorted(ORDER) == sorted(V1) == sorted(V23), "scenario names differ between the snapshots"
 
-print("| Scenario | v1 | v2.2 | Reduction |")
+print("| Scenario | v1 | v2.3 | Reduction |")
 print("|----------|---:|-----:|----------:|")
 for name in ORDER:
-    v1, v22 = int(V1[name]), int(V22[name])
-    print(f"| `{name}` | {v1:,} | {v22:,} | {100 * (v1 - v22) / v1:.1f}% |")
+    v1, v23 = int(V1[name]), int(V23[name])
+    print(f"| `{name}` | {v1:,} | {v23:,} | {100 * (v1 - v23) / v1:.1f}% |")
