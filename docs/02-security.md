@@ -21,7 +21,7 @@ The owner is the deployer. Ownership uses OpenZeppelin `Ownable2Step` v4.9.3.
 
 There is no pause and no emergency withdrawal. After a migration users can withdraw their principal at any time.
 
-`addStakingReward(amount)` is not an owner function since v2.3: anyone can deposit. A deposit only adds to the next epoch to start, so it cannot stretch or compress the epoch already running, which is what the owner could do with `addStakingReward(0, duration)` in v2.2.
+`addStakingReward(amount)` is not an owner function since v2.3: anyone can deposit. A deposit only adds to the next epoch to start, so the epoch already running keeps its rate and its end.
 
 ### Griefing and extraction
 

@@ -22,7 +22,7 @@ The original contract was written at Dexynth (2023-2024). v2 to v2.3 are a later
 ## Highlights
 
 - **Constant cost.** `stake`, `unstake` and `harvest` never loop over stakes, levels or epochs. `harvest` costs 160,239 gas after 1 epoch or after 100, with 1 stake or with 500; the original contract needed 22,492,295 gas to harvest after 100 epochs.
-- **Deposits never reschedule.** Anyone can deposit rewards, and a deposit streams over the next epoch to start: it cannot change the rate or the end of the epoch already running.
+- **Steady epochs.** Anyone can deposit rewards, and a deposit streams over the next epoch to start, so the epoch already running keeps its rate and its end.
 - **Exact with low-decimal reward tokens.** Rates and the accumulator are scaled by 1e36: with a 6-decimal reward token and a pool update every 12 seconds, a day of a 1,000 token, 15 day epoch pays exactly the expected 66,666,666 units.
 - **Rounding favours the contract.** The invariant suites bound the reward balance from both sides: never below what is owed, never above it by more than the rounding dust.
 - **Bounded owner powers.** The owner can only migrate. A migration waits 30 days, expires after a 7-day window and can only move rewards that are not streamed yet: never staked DEXY and never rewards already accrued to stakers.

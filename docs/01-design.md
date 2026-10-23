@@ -20,11 +20,11 @@ How `DexynthStakingV2_3` accounts for rewards, the bounds that keep that account
 
 ### Why epochs (v2.3)
 
-v2.2 let the owner restart the stream with any amount and duration: `addStakingReward(amount, duration)` spread the new amount plus everything not streamed yet over the new duration. Topping up 5,000 tokens over 10 days in the middle of a 100,000 token, 365 day stream paid the remaining 100,000 in 10 days too, and a zero amount over one second paid everything left at once. v2.3 was made together with the demo app, to make the contract more educational: a platform that earns rewards over time deposits them as they come, and each deposit is paid out over one epoch without touching the others. With epochs as long as the deposit interval, every epoch pays what the previous one collected, so the payout is regular even when deposits are not. The cost is a delay: a deposit waits for the next epoch to start, up to one full epoch.
+v2.3 was made together with the demo app, to improve the project's educational experience. It models how a platform pays out real yield: the platform deposits rewards as it earns them, and each deposit is paid out over one epoch, independently of the others. With epochs as long as the deposit interval, every epoch pays what the previous one collected, so the payout is regular even when deposits are not, and stakers can see the next epoch's rewards before it starts. The trade-off is a delay: a deposit waits for the next epoch to start, up to one full epoch.
 
 ### Changes for users from v2.2 to v2.3
 
-- `addStakingReward(_amount)` has no duration and anyone can call it. A deposit streams over the next epoch to start; it cannot reschedule what is already streaming. A zero amount reverts with `WrongParams`.
+- `addStakingReward(_amount)` has no duration and anyone can call it. A deposit streams over the next epoch to start, and the epoch already running keeps its rate and its end. A zero amount reverts with `WrongParams`.
 - The constructor takes the start of epoch 0 (`_firstEpochStart`), which must be after the deployment (`StartNotInFuture`). What is deposited before it streams during epoch 0.
 - The lock counts from the stake: `unlockTime` is the stake's timestamp plus the level's `lockingPeriod`, no longer rounded up to the next epoch start.
 - `rewardEndTime` is replaced by `nextEpochStart` and `queuedRewards` is new. `getCurrentEpochIndex()` reverts with `EpochsNotStarted` before epoch 0 starts.

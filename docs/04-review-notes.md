@@ -115,7 +115,7 @@ An independent review of the full diff found no contract bug and raised these po
 
 ### v2.3 (Oct 2026): epoch funding
 
-Made together with the demo app, to make the contract more educational: rewards are deposited as a platform earns them and each deposit is paid out over one epoch, which shows how a real yield stream keeps a regular pace without letting a deposit reschedule the others. Not reviewed. See [why epochs](./01-design.md#why-epochs-v23) and the [changes for users](./01-design.md#changes-for-users-from-v22-to-v23).
+Made together with the demo app, to improve the project's educational experience: rewards are deposited as a platform earns them and each deposit is paid out over one epoch, which shows how a real yield stream keeps a regular pace. Not reviewed. See [why epochs](./01-design.md#why-epochs-v23) and the [changes for users](./01-design.md#changes-for-users-from-v22-to-v23).
 
 - `addStakingReward(_amount)`: no duration, open to anyone, queued for the next epoch to start. The epoch's rate is set when it starts from everything queued for it, and a deposit never changes the epoch already running.
 - The constructor takes the start of epoch 0, after the deployment; what is deposited before it streams during epoch 0.
