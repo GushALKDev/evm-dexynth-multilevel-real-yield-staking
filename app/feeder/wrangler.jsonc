@@ -1,0 +1,19 @@
+// The demo's scheduled depositor (feeder/index.ts), a Worker of its own so the site and the depositor deploy apart.
+// Its key is the Worker secret FEEDER_PRIVATE_KEY, set with `npx wrangler secret put FEEDER_PRIVATE_KEY -c
+// feeder/wrangler.jsonc`, never written here. The addresses come from src/config/deployments/84532.json at build time.
+{
+  "name": "staking-feeder",
+  "main": "index.ts",
+  "compatibility_date": "2026-10-21",
+  // No public URL: the Worker only runs from its cron trigger
+  "workers_dev": false,
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
+  "vars": {
+    "RPC_URL": "https://sepolia.base.org"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
