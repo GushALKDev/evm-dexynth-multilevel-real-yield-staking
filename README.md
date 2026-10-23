@@ -11,6 +11,12 @@ The original contract was written at Dexynth (2023-2024). v2 to v2.3 are a later
 
 > **Proof of concept for educational purposes. Not audited and not deployed on any mainnet.**
 
+**Demo app:** a web interface in [`app/`](./app/README.md) runs the staking contract on Base Sepolia with testnet tokens: stake, harvest, unstake and deposit rewards, with previews computed by the contract's own math.
+
+**Live demo:** https://staking-poc.gushalk.workers.dev
+
+[![The demo app's staking page, with the reward stream split by boosted weight read live from Base Sepolia](docs/images/demo-app.png)](https://staking-poc.gushalk.workers.dev)
+
 ---
 
 ## Highlights
@@ -35,8 +41,6 @@ and unstake. The testnet deployment keeps the production multipliers but uses 7-
 anyone can deposit rewards and watch the next epoch's rate rise, and a scheduled depositor on Cloudflare Workers plays
 the platform, depositing a day of yield every day, 500 to 2,000 USDC a week. Its tooling lives in [script/testnet/](./script/testnet)
 with its own tests. How it works, how to run it and how to deploy it: [app/README.md](./app/README.md).
-
-Live demo: https://staking-poc.gushalk.workers.dev
 
 ---
 
@@ -136,7 +140,7 @@ app/              the Base Sepolia demo app and its scheduled depositor (app/fee
 bench/            the frozen v1 contract used by the benchmarks and the differential test
 gas/              gas benchmarks against v1
 snapshots/        the gas snapshots CI regenerates and compares
-docs/             the four guides
+docs/             the four guides and the demo app screenshot in this README (docs/images/)
 images/           screenshots of the original spreadsheet model, used by the design guide
 ```
 
