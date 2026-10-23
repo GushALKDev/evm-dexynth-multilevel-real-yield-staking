@@ -33,14 +33,18 @@ The original contract was written at Dexynth (2023-2024). v2 to v2.3 are a later
 
 ## Demo app
 
-[app/](./app) is a web app for this contract on Base Sepolia, with testnet DEXY from a faucet and a 6-decimal USDC
-stand-in as the reward token. It draws the reward stream split by boosted weight, previews every stake and unstake
-with the contract's own rounding (checked to the wei against a local deployment) and lets visitors stake, harvest
-and unstake. The testnet deployment keeps the production multipliers but uses 7-day epochs and locks of 1 hour to
-14 days, so a stake can be unstaked an hour after it is made. The faucet gives every visitor USDC as well as DEXY, so
-anyone can deposit rewards and watch the next epoch's rate rise, and a scheduled depositor on Cloudflare Workers plays
-the platform, depositing a day of yield every day, 500 to 2,000 USDC a week. Its tooling lives in [script/testnet/](./script/testnet)
-with its own tests. How it works, how to run it and how to deploy it: [app/README.md](./app/README.md).
+[app/](./app) runs this contract on Base Sepolia with testnet tokens. Every figure is read from the contract, and every
+preview uses the contract's own rounding, checked to the wei against a local deployment.
+
+- **What a visitor can do:** claim 10,000 DEXY and 500 USDC from the faucet, stake at any level, harvest, unstake, and
+  deposit USDC as rewards to watch the next epoch's rate rise.
+- **What differs from production:** 7-day epochs and locks of 1 hour to 14 days, so a stake can be unstaked an hour
+  after it is made. The multipliers are the production ones.
+- **Who funds the rewards:** a scheduled depositor on Cloudflare Workers plays the platform, depositing a day of yield
+  every day, 500 to 2,000 USDC a week.
+
+The testnet tooling and its tests live in [script/testnet/](./script/testnet). How the app works, how to run it and
+how to deploy it: [app/README.md](./app/README.md).
 
 ---
 
