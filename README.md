@@ -13,9 +13,9 @@ The original contract was written at Dexynth (2023-2024). v2 to v2.3 are a later
 
 **Demo app:** a web interface in [`app/`](./app/README.md) runs the staking contract on Base Sepolia with testnet tokens: stake, harvest, unstake and deposit rewards, with previews computed by the contract's own math.
 
-**Live demo:** https://staking-poc.gushalk.workers.dev
+**Live demo:** https://staking-poc.tesselium.com
 
-[![The demo app's staking page: the running epoch, the reward stream split by boosted weight and what each level gets over the epoch, read live from Base Sepolia](docs/images/demo-app.png)](https://staking-poc.gushalk.workers.dev)
+[![The demo app's staking page: the running epoch, the reward stream split by boosted weight and what each level gets over the epoch, read live from Base Sepolia](docs/images/demo-app.png)](https://staking-poc.tesselium.com)
 
 ---
 

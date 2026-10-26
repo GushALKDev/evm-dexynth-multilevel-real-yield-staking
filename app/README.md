@@ -7,7 +7,7 @@ epoch's rate rise. A scheduled depositor on Cloudflare Workers plays the platfor
 
 Proof of concept, not audited, for educational purposes. The tokens are testnet stand-ins with no value.
 
-Live: https://staking-poc.gushalk.workers.dev
+Live: https://staking-poc.tesselium.com
 
 ## What it shows
 
@@ -207,8 +207,8 @@ The app runs as `staking-poc`, an assets-only Worker: there is no Worker script.
 `dist/` and holds the SPA fallback, which serves `index.html` for every page path (`/how-it-works`).
 `public/_headers` holds the cache and security headers; Vite copies it into `dist/`.
 
-The `og:image` and `og:url` tags in `index.html` carry the absolute workers.dev URL, since link preview crawlers
-do not resolve relative paths: change them if the Worker's URL differs or the app moves to its own domain.
+The `og:image` and `og:url` tags in `index.html` carry the absolute URL of the app's domain, staking-poc.tesselium.com,
+since link preview crawlers do not resolve relative paths: change them if the app moves to another domain.
 
 First deploy, from a terminal in `app/`:
 
