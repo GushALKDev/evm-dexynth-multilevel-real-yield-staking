@@ -67,6 +67,7 @@ notice        one line: testnet, educational, not audited, stand-ins and shorten
               + four figures
               grid: your position, stake form and stakes (left, wider) | levels, stream, deposits (right)
 /how-it-works four mechanics + what differs on this testnet
+/legal        legal notice: owner (LSSI-CE), purpose, liability, data and cookies; linked from the footer only
 
 footer
 ```

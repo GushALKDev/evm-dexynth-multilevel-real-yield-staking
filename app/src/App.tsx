@@ -3,6 +3,7 @@ import { AccountCard } from './components/Account'
 import { DepositCard, LevelsCard, StreamCard } from './components/Cards'
 import { FaucetDialog } from './components/FaucetDialog'
 import { Hero } from './components/Hero'
+import { LegalNotice } from './components/Legal'
 import { Footer, Header, HowItWorks, Notice } from './components/Sections'
 import { Toasts } from './components/Toasts'
 import { ConnectDialog } from './components/Wallet'
@@ -41,7 +42,9 @@ function Staking() {
     <>
       <Header page={page} onConnect={openConnect} onFaucet={() => setFaucetOpen(true)} />
       <Notice />
-      {model ? (
+      {page === 'legal' ? (
+        <LegalNotice />
+      ) : model ? (
         <main>
           {page === 'stake' ? (
             <>

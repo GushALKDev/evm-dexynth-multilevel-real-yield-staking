@@ -1,11 +1,14 @@
 import { useSyncExternalStore } from 'react'
 
-export type Page = 'stake' | 'how'
+export type Page = 'stake' | 'how' | 'legal'
 
 export const pages: { page: Page; path: string; label: string }[] = [
   { page: 'stake', path: '/', label: 'Stake' },
   { page: 'how', path: '/how-it-works', label: 'How it works' },
 ]
+
+/** Linked from the footer only, so it stays out of the header's page list. */
+export const LEGAL_PATH = '/legal'
 
 function subscribe(onChange: () => void) {
   window.addEventListener('popstate', onChange)
@@ -32,5 +35,6 @@ export function navigate(href: string) {
 export function useRoute(): { page: Page; url: string } {
   const url = useSyncExternalStore(subscribe, currentUrl)
   const path = url.split('#')[0].replace(/\/+$/, '') || '/'
+  if (path === LEGAL_PATH) return { page: 'legal', url }
   return { page: pages.find((p) => p.path === path)?.page ?? 'stake', url }
 }
