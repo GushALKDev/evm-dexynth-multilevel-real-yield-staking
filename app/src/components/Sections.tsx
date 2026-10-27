@@ -183,7 +183,7 @@ export function Footer({ model }: { model: StakingModel | null }) {
           </a>
           {model ? (
             <a href={explorerAddress(model.deployment.staking)} target="_blank" rel="noreferrer">
-              Staking contract
+              Contract
             </a>
           ) : null}
           <span>
@@ -196,7 +196,7 @@ export function Footer({ model }: { model: StakingModel | null }) {
               Tesselium Labs
             </a>
           </span>
-          <Link href={LEGAL_PATH}>Legal notice</Link>
+          <Link href={LEGAL_PATH}>Legal</Link>
         </nav>
       </div>
     </footer>
