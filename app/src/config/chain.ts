@@ -24,6 +24,7 @@ export const links = {
   design: 'https://github.com/GushALKDev/evm-dexynth-multilevel-real-yield-staking/blob/main/docs/01-design.md',
   security: 'https://github.com/GushALKDev/evm-dexynth-multilevel-real-yield-staking/blob/main/docs/02-security.md',
   author: 'https://www.linkedin.com/in/gustavomaral/',
+  tesselium: 'https://tesselium.com',
   ethFaucet: 'https://docs.base.org/base-chain/network-information/network-faucets',
 }
 
